@@ -552,8 +552,8 @@ class TradingScheduler:
                 signal.direction, symbol, combined_rec, combined_confidence,
             )
 
-            # High-analysis requirement: only allow CONFIRM trades
-            if combined_rec == "REJECT":
+            # Only block trades the AI explicitly rejects (grade D)
+            if combined_rec == "REJECT" and combined_confidence < 35:
                 original_direction = signal.direction
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"AI REJECTED (conf={combined_confidence:.0f}%): {ai_analysis['analysis']}")
@@ -562,20 +562,10 @@ class TradingScheduler:
                 )
                 await self.order_manager.process_signal(session, signal, account_balance)
                 return result
-            elif combined_rec == "HOLD":
-                original_direction = signal.direction
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(f"AI HOLD (conf={combined_confidence:.0f}%): not confident enough")
-                logger.info(
-                    "AI HOLD blocked %s %s (conf=%.1f%%) — high-analysis mode requires CONFIRM",
-                    original_direction, symbol, combined_confidence,
-                )
-                await self.order_manager.process_signal(session, signal, account_balance)
-                return result
-            # CONFIRM — proceed with trade
+            # CONFIRM or HOLD — proceed with trade (HOLD = mixed signals, still tradeable)
             logger.info(
-                "AI CONFIRMED %s %s (conf=%.1f%%) — high-analysis trade approved",
-                signal.direction, symbol, combined_confidence,
+                "AI approved %s %s: %s (conf=%.1f%%)",
+                signal.direction, symbol, combined_rec, combined_confidence,
             )
 
         # Portfolio risk check
@@ -643,9 +633,9 @@ class TradingScheduler:
                 e20 = float(ema20.iloc[-1])
                 e50 = float(ema50.iloc[-1])
                 sep = (e20 - e50) / e50 if e50 != 0 else 0
-                if sep > 0.001:
+                if sep > 0.005:
                     self._htf_trend[symbol] = "up"
-                elif sep < -0.001:
+                elif sep < -0.005:
                     self._htf_trend[symbol] = "down"
                 else:
                     self._htf_trend[symbol] = "flat"

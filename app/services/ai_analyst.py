@@ -358,65 +358,45 @@ class AIAnalyst:
 
     def _build_analysis_prompt(self, market_summary: dict) -> str:
         """Build the deep-research analysis prompt for the AI."""
-        return f"""You are an elite quantitative trading analyst with 20 years of experience.
-Your job: perform DEEP RESEARCH on this trade setup and decide whether it is worth risking real money.
+        return f"""You are a professional trading analyst. Analyze this trade setup using the data below.
 
-COMPLETE MARKET DATA:
+MARKET DATA:
 {json.dumps(market_summary, indent=2)}
 
-DEEP RESEARCH CHECKLIST — you MUST evaluate ALL of these:
+ANALYSIS CHECKLIST — evaluate each quickly:
 
-1. TREND ANALYSIS
-   - Is the trade direction aligned with EMA 20/50/200 trend structure?
-   - Is the MACD confirming momentum? Any MACD crossover?
-   - What does the price structure (higher-highs/lows) tell us?
+1. TREND: Is direction aligned with EMA 20/50 structure? MACD confirming?
+2. MOMENTUM: RSI-14 and RSI-7 — confirming direction? Any divergence?
+3. VOLATILITY: Bollinger Band position? Spread vs ATR ratio acceptable?
+4. SUPPORT/RESISTANCE: Near pivot, Fibonacci, or key levels?
+5. PATTERNS: Any confirming candlestick patterns?
+6. VOLUME: Confirming the move (if available)?
+7. RISK-REWARD: Is there a reasonable R:R ratio?
 
-2. MOMENTUM & OSCILLATORS
-   - RSI-14 and RSI-7 alignment — are both confirming the direction?
-   - Any RSI divergence detected? (bullish/bearish divergence is a strong signal)
-   - Is RSI in overbought (>70) or oversold (<30) territory?
-
-3. VOLATILITY & RISK
-   - Bollinger Band position — is price near the bands? Squeeze or expansion?
-   - ATR as % of price — is volatility appropriate for this trade?
-   - Spread vs ATR — is the spread eating too much of the expected move?
-
-4. SUPPORT & RESISTANCE
-   - Where are the pivot points, R1, R2, S1, S2?
-   - Is price near a Fibonacci retracement level?
-   - Is the trade direction aligned with key levels or fighting against them?
-
-5. CANDLESTICK PATTERNS
-   - Any reversal patterns detected? (engulfing, hammer, shooting star, doji)
-   - Do the patterns confirm or contradict the signal?
-
-6. VOLUME (if available)
-   - Is volume confirming the move? Volume increasing with price = strong.
-   - Low volume = weak move, high risk of reversal.
-
-7. RISK-REWARD ASSESSMENT
-   - Given ATR and key levels, what is the realistic risk-reward ratio?
-   - Is this a HIGH-PROBABILITY setup or a marginal one?
+IMPORTANT GUIDELINES:
+- If 3+ of the 7 factors support the trade direction, you should CONFIRM.
+- Only REJECT if there are clear STRONG reasons against (e.g., major divergence, price hitting strong resistance for a BUY, extreme overbought/oversold AGAINST the direction).
+- A trade doesn't need to be perfect. We want GOOD setups, not only PERFECT ones.
+- Neutral/mixed signals = CONFIRM with moderate confidence, NOT reject.
 
 RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
 {{
     "recommendation": "CONFIRM" or "REJECT" or "HOLD",
     "confidence": <number 0-100>,
-    "analysis": "<detailed 3-5 sentence analysis covering trend, momentum, key levels, and patterns>",
-    "risk_notes": "<specific risk warnings: divergences, key levels, overextension, spread concerns>",
-    "key_levels": "<nearest support and resistance levels that matter for this trade>",
+    "analysis": "<2-3 sentence analysis covering the key factors>",
+    "risk_notes": "<specific risk warnings if any>",
+    "key_levels": "<nearest support and resistance>",
     "trade_quality": "A+" or "A" or "B" or "C" or "D"
 }}
 
-GRADING RULES:
-- A+ (CONFIRM, 85-100%): Perfect alignment — trend + momentum + patterns + levels all agree
-- A (CONFIRM, 70-85%): Strong setup — most factors agree, minor concerns
-- B (CONFIRM, 60-70%): Decent setup — proceed with caution, some conflicting signals
-- C (HOLD, 40-60%): Marginal — too many conflicting signals, wait for clarity
-- D (REJECT, 0-40%): Bad setup — clear reasons to avoid (divergence, wrong side of key level, etc.)
+GRADING:
+- A+ (CONFIRM, 85-100%): 6-7 factors align perfectly
+- A (CONFIRM, 70-85%): 5+ factors agree, minor concerns
+- B (CONFIRM, 55-70%): 3-4 factors agree, decent setup
+- C (CONFIRM, 40-55%): Mixed signals but no strong reason to reject
+- D (REJECT, 0-40%): Clear strong reasons against the trade
 
-Only CONFIRM if grade is B or above. REJECT grade D. HOLD grade C.
-Be STRICT — we are trading with real money. Quality over quantity."""
+CONFIRM for grades A+ through C. Only REJECT for grade D."""
 
     async def _call_openrouter(self, prompt: str, model: str = "") -> str:
         """Call OpenRouter API and return the response text."""
@@ -432,12 +412,11 @@ Be STRICT — we are trading with real money. Quality over quantity."""
                 {
                     "role": "system",
                     "content": (
-                        "You are an elite quantitative trading analyst. "
-                        "You perform deep technical research on every trade setup. "
-                        "You analyze trend structure, momentum, oscillators, volatility, "
-                        "support/resistance, Fibonacci levels, candlestick patterns, and volume. "
-                        "You are STRICT — only approve high-quality setups. "
-                        "Real money is at stake. Quality over quantity. "
+                        "You are a professional trading analyst. "
+                        "You analyze trend, momentum, volatility, S/R levels, and patterns. "
+                        "You CONFIRM trades when 3+ factors support the direction. "
+                        "You only REJECT when there are clear strong reasons against the trade. "
+                        "Mixed or neutral signals should be CONFIRMED with moderate confidence. "
                         "Always respond in the exact JSON format requested."
                     ),
                 },
