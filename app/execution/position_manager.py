@@ -191,27 +191,57 @@ class PositionManager:
         """
         Sync positions from Capital.com API with local database.
         Useful for reconciliation in demo/live mode.
+
+        Capital.com can return slightly different deal IDs in order confirmation
+        vs the positions API (e.g., suffix differs by 1). So we match by both
+        exact deal_id AND by symbol+direction+size as a fallback.
         """
         if settings.trading.mode not in ("demo", "live"):
             return
 
         try:
             api_positions = await self.client.get_positions()
-            api_deal_ids = {
-                p.get("position", {}).get("dealId") for p in api_positions
-            }
+            api_deal_ids = set()
+            api_positions_by_key: dict[tuple[str, str, float], str] = {}
+            for p in api_positions:
+                pos_data = p.get("position", {})
+                market_data = p.get("market", {})
+                deal_id = pos_data.get("dealId", "")
+                api_deal_ids.add(deal_id)
+                # Also index by symbol+direction+size for fuzzy matching
+                key = (
+                    market_data.get("epic", ""),
+                    pos_data.get("direction", ""),
+                    float(pos_data.get("size", 0)),
+                )
+                api_positions_by_key[key] = deal_id
 
             # Close local positions that are no longer open on the API
             local_positions = await self.get_open_positions(session)
             for pos in local_positions:
-                if pos.deal_id and pos.deal_id not in api_deal_ids:
+                if not pos.deal_id:
+                    continue
+                # Check exact deal_id match first
+                if pos.deal_id in api_deal_ids:
+                    continue
+                # Fuzzy match: same symbol, direction, size
+                fuzzy_key = (pos.symbol, pos.direction, pos.size)
+                if fuzzy_key in api_positions_by_key:
+                    new_deal_id = api_positions_by_key[fuzzy_key]
                     logger.info(
-                        "Position %s closed externally, updating local DB",
-                        pos.deal_id,
+                        "Position %s matched to API deal %s by symbol/direction/size, updating deal_id",
+                        pos.deal_id, new_deal_id,
                     )
-                    pos.is_open = False
-                    pos.closed_at = datetime.now(timezone.utc)
-                    pos.result = TradeResult.EXTERNAL_CLOSE
+                    pos.deal_id = new_deal_id
+                    continue
+                # No match found — position was truly closed externally
+                logger.info(
+                    "Position %s closed externally, updating local DB",
+                    pos.deal_id,
+                )
+                pos.is_open = False
+                pos.closed_at = datetime.now(timezone.utc)
+                pos.result = TradeResult.EXTERNAL_CLOSE
 
             await session.commit()
         except CapitalAPIError as e:
