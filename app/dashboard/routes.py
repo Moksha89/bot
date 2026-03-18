@@ -3,7 +3,9 @@ Dashboard routes for the admin web UI.
 Provides endpoints for monitoring bot status, trades, and P&L.
 """
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -27,6 +29,41 @@ from app.db.session import async_session
 from app.api.capital_client import CapitalClient, CapitalAPIError
 
 logger = logging.getLogger(__name__)
+
+
+# --- Shared Capital.com client with cached session ---
+# Avoids re-authenticating on every dashboard refresh (prevents 429 rate limiting)
+_shared_client: Optional[CapitalClient] = None
+_shared_client_lock = asyncio.Lock()
+_shared_client_auth_time: float = 0.0
+_SHARED_CLIENT_TTL = 540  # Re-authenticate every 9 minutes (session lasts 10 min)
+
+
+async def _get_shared_client() -> CapitalClient:
+    """Get or create a shared authenticated Capital.com client for dashboard use."""
+    global _shared_client, _shared_client_auth_time
+    async with _shared_client_lock:
+        now = time.monotonic()
+        if (
+            _shared_client is not None
+            and _shared_client.cst
+            and (now - _shared_client_auth_time) < _SHARED_CLIENT_TTL
+        ):
+            return _shared_client
+
+        # Close old client if exists
+        if _shared_client is not None:
+            try:
+                await _shared_client.close()
+            except Exception:
+                pass
+
+        client = CapitalClient()
+        await client.authenticate()
+        _shared_client = client
+        _shared_client_auth_time = now
+        logger.info("Dashboard shared client authenticated")
+        return _shared_client
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -123,29 +160,28 @@ async def get_bot_status() -> BotStatus:
 
 @router.get("/api/account")
 async def get_account_info() -> dict:
-    """Get live account balance from Capital.com."""
+    """Get live account balance from Capital.com (uses shared cached session)."""
     if settings.trading.mode not in ("demo", "live", "analysis"):
         return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": ""}
     try:
-        client = CapitalClient()
-        try:
-            await client.authenticate()
-            balance = await client.get_account_balance()
-            # Also get currency from accounts endpoint
-            accounts_data = await client.get_accounts()
-            accounts = accounts_data.get("accounts", [])
-            currency = accounts[0].get("currency", "") if accounts else ""
-            return {
-                "balance": balance.get("balance", 0),
-                "equity": balance.get("equity", 0),
-                "available": balance.get("available", 0),
-                "pnl": balance.get("pnl", 0),
-                "currency": currency,
-            }
-        finally:
-            await client.close()
+        client = await _get_shared_client()
+        balance = await client.get_account_balance()
+        accounts_data = await client.get_accounts()
+        accounts = accounts_data.get("accounts", [])
+        currency = accounts[0].get("currency", "") if accounts else ""
+        return {
+            "balance": balance.get("balance", 0),
+            "equity": balance.get("equity", 0),
+            "available": balance.get("available", 0),
+            "pnl": balance.get("pnl", 0),
+            "currency": currency,
+        }
     except (CapitalAPIError, Exception) as e:
         logger.error("Failed to fetch account info: %s", e)
+        # Reset shared client on auth errors so next request re-authenticates
+        global _shared_client, _shared_client_auth_time
+        _shared_client = None
+        _shared_client_auth_time = 0.0
         return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": "", "error": str(e)}
 
 
@@ -314,22 +350,18 @@ async def toggle_kill_switch(enable: bool = True) -> dict:
 
 @router.get("/api/live-positions")
 async def get_live_positions() -> dict:
-    """Get live positions with real-time P/L from Capital.com API."""
+    """Get live positions with real-time P/L from Capital.com API (uses shared cached session)."""
     if settings.trading.mode not in ("demo", "live", "analysis"):
         return {"positions": [], "account": {}}
     try:
-        client = CapitalClient()
-        try:
-            await client.authenticate()
-            api_positions = await client.get_positions()
-            balance_data = await client.get_account_balance()
-            accounts_data = await client.get_accounts()
-            currency = ""
-            accounts = accounts_data.get("accounts", [])
-            if accounts:
-                currency = accounts[0].get("currency", "")
-        finally:
-            await client.close()
+        client = await _get_shared_client()
+        api_positions = await client.get_positions()
+        balance_data = await client.get_account_balance()
+        accounts_data = await client.get_accounts()
+        currency = ""
+        accounts = accounts_data.get("accounts", [])
+        if accounts:
+            currency = accounts[0].get("currency", "")
 
         positions = []
         total_pnl = 0.0
@@ -391,6 +423,10 @@ async def get_live_positions() -> dict:
         }
     except (CapitalAPIError, Exception) as e:
         logger.error("Failed to fetch live positions: %s", e)
+        # Reset shared client on errors so next request re-authenticates
+        global _shared_client, _shared_client_auth_time  # noqa: F811
+        _shared_client = None
+        _shared_client_auth_time = 0.0
         return {"positions": [], "account": {}, "error": str(e)}
 
 
