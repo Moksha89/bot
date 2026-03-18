@@ -100,10 +100,13 @@ class TradingScheduler:
     async def initialize(self) -> bool:
         """Initialize the scheduler: authenticate and set up resources."""
         try:
-            if settings.trading.mode in ("demo", "live"):
+            if settings.trading.mode in ("demo", "live", "analysis"):
                 await self.client.authenticate()
                 self._authenticated = True
-                logger.info("Authenticated with Capital.com")
+                logger.info("Authenticated with Capital.com (%s mode)", settings.trading.mode)
+            elif settings.trading.mode == "paper":
+                logger.info("Running in paper mode, skipping authentication")
+                self._authenticated = False
             else:
                 logger.info("Running in %s mode, skipping authentication", settings.trading.mode)
                 self._authenticated = False
