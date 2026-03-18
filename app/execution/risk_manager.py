@@ -123,6 +123,9 @@ class RiskManager:
                 if last_loss_time:
                     cooldown_end = last_loss_time + timedelta(minutes=self.cooldown_minutes)
                     now = datetime.now(timezone.utc)
+                    # Ensure timezone-aware comparison (SQLite may strip tzinfo)
+                    if cooldown_end.tzinfo is None:
+                        cooldown_end = cooldown_end.replace(tzinfo=timezone.utc)
                     if now >= cooldown_end:
                         # Cooldown expired — allow trading to resume
                         return True, (

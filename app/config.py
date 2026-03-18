@@ -45,8 +45,12 @@ class CapitalConfig:
 @dataclass
 class TradingConfig:
     symbol: str = field(default_factory=lambda: _env("TRADING_SYMBOL", "XAUUSD"))
+    symbols: list[str] = field(default_factory=lambda: [
+        s.strip() for s in _env("TRADING_SYMBOLS", "XAUUSD").split(",") if s.strip()
+    ])
     timeframe: str = field(default_factory=lambda: _env("TRADING_TIMEFRAME", "HOUR"))
     mode: str = field(default_factory=lambda: _env("TRADING_MODE", "demo"))
+    strategy: str = field(default_factory=lambda: _env("TRADING_STRATEGY", "auto"))
 
 
 @dataclass
@@ -83,6 +87,15 @@ class RiskConfig:
     )
     tp_risk_reward: float = field(
         default_factory=lambda: _env_float("TP_RISK_REWARD", 2.0)
+    )
+    max_portfolio_risk: float = field(
+        default_factory=lambda: _env_float("MAX_PORTFOLIO_RISK", 0.10)
+    )
+    max_correlated_exposure: float = field(
+        default_factory=lambda: _env_float("MAX_CORRELATED_EXPOSURE", 0.15)
+    )
+    max_total_positions: int = field(
+        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 5)
     )
 
 
@@ -130,6 +143,43 @@ class Settings:
     )
     ai_analysis_enabled: bool = field(
         default_factory=lambda: _env_bool("AI_ANALYSIS_ENABLED", True)
+    )
+    ai_vision_model: str = field(
+        default_factory=lambda: _env("AI_VISION_MODEL", "google/gemini-2.0-flash-001")
+    )
+    # Feature flags
+    trailing_stop_enabled: bool = field(
+        default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True)
+    )
+    trailing_stop_activation_r: float = field(
+        default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_R", 1.0)
+    )
+    trailing_stop_atr_mult: float = field(
+        default_factory=lambda: _env_float("TRAILING_STOP_ATR_MULT", 1.0)
+    )
+    session_filter_enabled: bool = field(
+        default_factory=lambda: _env_bool("SESSION_FILTER_ENABLED", True)
+    )
+    allowed_sessions: str = field(
+        default_factory=lambda: _env("ALLOWED_SESSIONS", "london,new_york")
+    )
+    news_filter_enabled: bool = field(
+        default_factory=lambda: _env_bool("NEWS_FILTER_ENABLED", True)
+    )
+    news_buffer_minutes: int = field(
+        default_factory=lambda: _env_int("NEWS_BUFFER_MINUTES", 30)
+    )
+    sentiment_enabled: bool = field(
+        default_factory=lambda: _env_bool("SENTIMENT_ENABLED", True)
+    )
+    ml_scoring_enabled: bool = field(
+        default_factory=lambda: _env_bool("ML_SCORING_ENABLED", True)
+    )
+    auto_optimize_enabled: bool = field(
+        default_factory=lambda: _env_bool("AUTO_OPTIMIZE_ENABLED", True)
+    )
+    auto_optimize_interval_hours: int = field(
+        default_factory=lambda: _env_int("AUTO_OPTIMIZE_INTERVAL_HOURS", 24)
     )
 
 

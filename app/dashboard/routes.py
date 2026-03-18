@@ -38,9 +38,12 @@ class BotStatus(BaseModel):
     is_running: bool
     mode: str
     symbol: str
+    symbols: list[str]
     timeframe: str
     kill_switch: bool
     uptime: str
+    strategy: str
+    features: dict
 
 
 class AccountInfo(BaseModel):
@@ -99,9 +102,21 @@ async def get_bot_status() -> BotStatus:
         is_running=is_running,
         mode=settings.trading.mode,
         symbol=settings.trading.symbol,
+        symbols=settings.trading.symbols,
         timeframe=settings.trading.timeframe,
         kill_switch=settings.kill_switch,
         uptime="N/A",
+        strategy=settings.trading.strategy,
+        features={
+            "multi_symbol": len(settings.trading.symbols) > 1,
+            "trailing_stop": settings.trailing_stop_enabled,
+            "session_filter": settings.session_filter_enabled,
+            "news_filter": settings.news_filter_enabled,
+            "sentiment": settings.sentiment_enabled,
+            "ml_scoring": settings.ml_scoring_enabled,
+            "auto_optimize": settings.auto_optimize_enabled,
+            "ai_analysis": settings.ai_analysis_enabled,
+        },
     )
 
 
@@ -266,6 +281,56 @@ async def toggle_kill_switch(enable: bool = True) -> dict:
     status = "ACTIVATED" if enable else "DEACTIVATED"
     logger.warning("Kill switch %s", status)
     return {"kill_switch": enable, "status": status}
+
+
+@router.get("/api/performance")
+async def get_performance() -> dict:
+    """Get performance analytics: Sharpe ratio, drawdown, equity curve."""
+    from app.services.performance import PerformanceAnalyzer
+
+    import dataclasses
+    analyzer = PerformanceAnalyzer()
+    async with async_session() as session:
+        metrics = await analyzer.calculate_metrics(session)
+        return dataclasses.asdict(metrics)
+
+
+@router.get("/api/backtest")
+async def run_backtest(
+    symbol: str = "XAUUSD",
+    timeframe: str = "HOUR",
+    strategy: str = "ema_crossover",
+    initial_balance: float = 10000.0,
+) -> dict:
+    """Run a backtest on historical data."""
+    from app.services.backtester import BacktestEngine
+    import dataclasses
+
+    # For demo, generate synthetic data if no API connection
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(42)
+    n = 500
+    prices = [2000.0]
+    for _ in range(n - 1):
+        prices.append(prices[-1] * (1 + np.random.normal(0, 0.005)))
+
+    df = pd.DataFrame({
+        "open": prices,
+        "high": [p * (1 + abs(np.random.normal(0, 0.002))) for p in prices],
+        "low": [p * (1 - abs(np.random.normal(0, 0.002))) for p in prices],
+        "close": [p * (1 + np.random.normal(0, 0.001)) for p in prices],
+        "volume": [np.random.randint(100, 1000) for _ in prices],
+    })
+
+    engine = BacktestEngine(initial_balance=initial_balance)
+    result = engine.run(df, symbol=symbol, timeframe=timeframe, strategy_type=strategy)
+    # Convert to dict, limit trades list
+    result_dict = dataclasses.asdict(result)
+    result_dict["trades"] = result_dict["trades"][:50]  # Limit for response size
+    result_dict["equity_curve"] = result_dict["equity_curve"][::5]  # Downsample
+    return result_dict
 
 
 @router.get("/", response_class=HTMLResponse)

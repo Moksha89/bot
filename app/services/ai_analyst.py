@@ -25,11 +25,13 @@ class AIAnalyst:
     """
     Uses OpenRouter LLM API to analyze market data and provide
     AI-powered trade confirmation before execution.
+    Supports both text-based and vision-based analysis.
     """
 
     def __init__(self) -> None:
         self.api_key = settings.openrouter_api_key
         self.model = settings.ai_model or DEFAULT_MODEL
+        self.vision_model = settings.ai_vision_model or self.model
         self.enabled = bool(self.api_key)
 
     async def analyze_market(
@@ -190,7 +192,7 @@ Rules:
 - Consider the spread relative to expected move
 - Factor in trend alignment with the signal direction"""
 
-    async def _call_openrouter(self, prompt: str) -> str:
+    async def _call_openrouter(self, prompt: str, model: str = "") -> str:
         """Call OpenRouter API and return the response text."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -199,7 +201,7 @@ Rules:
             "X-Title": "Capital Trading Bot",
         }
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": [
                 {
                     "role": "system",
@@ -229,6 +231,75 @@ Rules:
                 if not choices:
                     raise RuntimeError("No response from OpenRouter API")
                 return choices[0]["message"]["content"]
+
+    async def analyze_with_chart(self, symbol: str, timeframe: str, df: pd.DataFrame,
+                                  signal_direction: str, indicators: dict) -> dict:
+        """
+        Advanced AI analysis that generates a text-based chart representation
+        and sends it to the vision model for pattern recognition.
+        """
+        if not self.enabled:
+            return {
+                "recommendation": "CONFIRM", "confidence": 50.0,
+                "analysis": "Vision analysis disabled", "risk_notes": "None",
+            }
+
+        chart_description = self._build_chart_description(df)
+        prompt = f"""You are an expert chart analyst. Analyze this {symbol} {timeframe} chart data and the proposed {signal_direction} trade.
+
+CHART DATA (last 30 candles):
+{chart_description}
+
+INDICATORS:
+- EMA Fast: {indicators.get('ema_fast', 'N/A')}
+- EMA Slow: {indicators.get('ema_slow', 'N/A')}
+- RSI: {indicators.get('rsi', 'N/A')}
+- ATR: {indicators.get('atr', 'N/A')}
+
+Look for:
+1. Chart patterns (head & shoulders, double top/bottom, triangles, flags)
+2. Support/resistance levels being tested
+3. Candlestick patterns (engulfing, doji, hammer, shooting star)
+4. Trend structure (higher highs/lows or lower highs/lows)
+5. Divergences between price and RSI
+
+RESPOND IN EXACTLY THIS JSON FORMAT:
+{{{{
+    "recommendation": "CONFIRM" or "REJECT" or "HOLD",
+    "confidence": <number 0-100>,
+    "analysis": "<analysis of chart patterns and structure>",
+    "risk_notes": "<pattern-based risk warnings>",
+    "patterns_detected": ["<list of chart patterns found>"]
+}}}}"""
+
+        try:
+            response = await self._call_openrouter(prompt, model=self.vision_model)
+            parsed = self._parse_ai_response(response)
+            return parsed
+        except Exception as e:
+            logger.error("Vision analysis failed: %s", e)
+            return {
+                "recommendation": "CONFIRM", "confidence": 50.0,
+                "analysis": f"Vision analysis error: {e}",
+                "risk_notes": "Vision analysis unavailable",
+            }
+
+    def _build_chart_description(self, df: pd.DataFrame) -> str:
+        """Build a text-based chart representation for AI analysis."""
+        recent = df.tail(30)
+        lines = []
+        for _, row in recent.iterrows():
+            o, h, l, c = float(row['open']), float(row['high']), float(row['low']), float(row['close'])
+            body = 'GREEN' if c >= o else 'RED'
+            body_size = abs(c - o)
+            upper_wick = h - max(o, c)
+            lower_wick = min(o, c) - l
+            dt = row.get('datetime', '')
+            lines.append(
+                f"{dt} | O:{o:.2f} H:{h:.2f} L:{l:.2f} C:{c:.2f} | "
+                f"{body} body:{body_size:.2f} upper_wick:{upper_wick:.2f} lower_wick:{lower_wick:.2f}"
+            )
+        return "\n".join(lines)
 
     def _parse_ai_response(self, response_text: str) -> dict:
         """Parse the AI response into a structured dict."""
