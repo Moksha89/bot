@@ -263,12 +263,12 @@ class AIAnalyst:
         rsi_tail = rsi.iloc[-lookback:].dropna()
         if len(rsi_tail) < lookback:
             return "insufficient_data"
-        price_making_lower_low = float(price_tail.iloc[-1]) < float(price_tail.min())
-        rsi_making_higher_low = float(rsi_tail.iloc[-1]) > float(rsi_tail.min())
+        price_making_lower_low = float(price_tail.iloc[-1]) < float(price_tail.iloc[:-1].min())
+        rsi_making_higher_low = float(rsi_tail.iloc[-1]) > float(rsi_tail.iloc[:-1].min())
         if price_making_lower_low and rsi_making_higher_low:
             return "bullish_divergence"
-        price_making_higher_high = float(price_tail.iloc[-1]) > float(price_tail.max())
-        rsi_making_lower_high = float(rsi_tail.iloc[-1]) < float(rsi_tail.max())
+        price_making_higher_high = float(price_tail.iloc[-1]) > float(price_tail.iloc[:-1].max())
+        rsi_making_lower_high = float(rsi_tail.iloc[-1]) < float(rsi_tail.iloc[:-1].max())
         if price_making_higher_high and rsi_making_lower_high:
             return "bearish_divergence"
         return "none"
