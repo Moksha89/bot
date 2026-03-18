@@ -402,19 +402,26 @@ class TradingScheduler:
                 signal.direction, symbol, combined_rec, combined_confidence,
             )
 
-            if combined_rec == "REJECT":
+            # Only block trade if AI is highly confident in rejection (>85%)
+            if combined_rec == "REJECT" and combined_confidence > 85.0:
                 original_direction = signal.direction
                 signal.direction = "NO_TRADE"
-                signal.reasons.append(f"AI REJECTED: {ai_analysis['analysis']}")
+                signal.reasons.append(f"AI REJECTED (conf={combined_confidence:.0f}%): {ai_analysis['analysis']}")
                 await self.notifier.notify_risk_limit(
                     f"AI rejected {original_direction} on {symbol}: {ai_analysis['analysis']}"
                 )
                 return result
+            elif combined_rec == "REJECT":
+                logger.info(
+                    "AI soft-reject for %s %s (conf=%.1f%% <= 85%%), proceeding with trade",
+                    signal.direction, symbol, combined_confidence,
+                )
+            # HOLD is treated as advisory — don't block the trade
             elif combined_rec == "HOLD":
-                original_direction = signal.direction
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(f"AI HOLD: {ai_analysis['analysis']}")
-                return result
+                logger.info(
+                    "AI HOLD for %s %s (conf=%.1f%%), proceeding with trade",
+                    signal.direction, symbol, combined_confidence,
+                )
 
         # Portfolio risk check
         if signal.stop_loss is not None:
