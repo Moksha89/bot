@@ -19,5 +19,4 @@ async def init_db() -> None:
 
 async def get_session() -> AsyncSession:
     """Get a new database session."""
-    async with async_session() as session:
-        return session
+    return async_session()

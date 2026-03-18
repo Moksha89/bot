@@ -60,6 +60,7 @@ class TradingScheduler:
         self.ai_analyst = AIAnalyst()
         self._is_running = False
         self._authenticated = False
+        self._latest_atr: dict[str, float] = {}  # ATR values from last symbol processing
 
         # New feature modules
         self.strategy_selector = StrategySelector()
@@ -196,7 +197,7 @@ class TradingScheduler:
                 try:
                     prices = await self.market_data.get_current_prices(symbols)
                     adjusted = await self.trailing_stop_manager.update_trailing_stops(
-                        session, prices,
+                        session, prices, atr_values=self._latest_atr,
                     )
                     if adjusted:
                         summary["trailing_adjustments"] = adjusted
@@ -266,6 +267,10 @@ class TradingScheduler:
 
         # Get spread
         spread = await self.market_data.get_spread(symbol)
+
+        # Store latest ATR value for trailing stop updates
+        if "atr" in df.columns and len(df) > 0:
+            self._latest_atr[symbol] = float(df.iloc[-1]["atr"])
 
         # Update portfolio price history for correlation tracking
         if "close" in df.columns:
@@ -401,7 +406,7 @@ class TradingScheduler:
 
         # Portfolio risk check
         if signal.stop_loss is not None:
-            position_risk = abs(signal.close_price - signal.stop_loss) * 0.01
+            position_risk = account_balance * settings.risk.risk_per_trade
             portfolio_check = await self.portfolio_manager.check_portfolio_risk(
                 session, symbol, signal.direction, account_balance, position_risk,
             )

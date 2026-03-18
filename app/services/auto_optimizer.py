@@ -117,10 +117,10 @@ class AutoOptimizer:
         df: pd.DataFrame,
         positions: list[Position],
     ) -> Optional[OptimizationResult]:
-        """Run grid search over parameter space."""
-        from app.strategy.indicators import add_all_indicators, calculate_ema, calculate_rsi
+        """Run grid search over parameter space using backtesting."""
+        from app.services.backtester import BacktestEngine
 
-        # Parameter ranges
+        # Parameter ranges (kept small for performance)
         ema_fast_range = [10, 15, 20, 25]
         ema_slow_range = [40, 50, 60]
         rsi_buy_ranges = [(50, 65), (55, 70), (55, 75)]
@@ -131,6 +131,8 @@ class AutoOptimizer:
         best_result: Optional[OptimizationResult] = None
         best_score = -999.0
 
+        engine = BacktestEngine(initial_balance=10000.0)
+
         for ema_f in ema_fast_range:
             for ema_s in ema_slow_range:
                 if ema_f >= ema_s:
@@ -140,7 +142,7 @@ class AutoOptimizer:
                         for sl_mult in sl_atr_range:
                             for tp_rr in tp_rr_range:
                                 score, wr, pf, trades = self._evaluate_params(
-                                    df, positions,
+                                    engine, df,
                                     ema_f, ema_s,
                                     rsi_buy[0], rsi_buy[1],
                                     rsi_sell[0], rsi_sell[1],
@@ -166,8 +168,8 @@ class AutoOptimizer:
 
     def _evaluate_params(
         self,
+        engine: object,
         df: pd.DataFrame,
-        positions: list[Position],
         ema_fast: int,
         ema_slow: int,
         rsi_buy_min: float,
@@ -178,37 +180,34 @@ class AutoOptimizer:
         tp_rr: float,
     ) -> tuple[float, float, float, int]:
         """
-        Evaluate a parameter set against historical trades.
+        Evaluate a parameter set by running a backtest on the DataFrame.
         Returns (score, win_rate, profit_factor, trade_count).
         Score = profit_factor * sqrt(trades) to balance profitability and sample size.
         """
-        wins = 0
-        losses = 0
-        total_profit = 0.0
-        total_loss = 0.0
+        try:
+            result = engine.run(  # type: ignore[attr-defined]
+                df,
+                strategy_type="ema_crossover",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                rsi_buy_min=rsi_buy_min,
+                rsi_buy_max=rsi_buy_max,
+                rsi_sell_min=rsi_sell_min,
+                rsi_sell_max=rsi_sell_max,
+                sl_atr_mult=sl_atr_mult,
+                tp_rr=tp_rr,
+            )
+        except Exception:
+            return -999.0, 0.0, 0.0, 0
 
-        for pos in positions:
-            if pos.pnl is None:
-                continue
-
-            # Simple scoring: weight by SL/TP ratio match
-            if pos.pnl > 0:
-                wins += 1
-                total_profit += pos.pnl
-            else:
-                losses += 1
-                total_loss += abs(pos.pnl)
-
-        total = wins + losses
+        total = result.total_trades
         if total == 0:
             return -999.0, 0.0, 0.0, 0
 
-        win_rate = wins / total
-        profit_factor = total_profit / total_loss if total_loss > 0 else (
-            10.0 if total_profit > 0 else 0.0
-        )
+        win_rate = result.win_rate
+        profit_factor = result.profit_factor
 
-        # Score: profit_factor weighted by trade count
+        # Score: profit_factor weighted by trade count and win rate
         score = profit_factor * (total ** 0.5) * (1 + win_rate)
 
         # Penalize extreme parameters
