@@ -102,6 +102,15 @@ class TradingScheduler:
         )
         # Cache for higher-timeframe trend per symbol
         self._htf_trend: dict[str, str] = {}  # symbol -> "up" / "down" / "flat"
+        # Daily trade counter & recovery mode
+        self._daily_trades: int = 0
+        self._daily_losses: int = 0
+        self._daily_wins: int = 0
+        self._daily_pnl: float = 0.0
+        self._last_reset_date: str = ""
+        self._recovery_mode: bool = False
+        # Symbol momentum scores for ranking (updated each cycle)
+        self._symbol_momentum: dict[str, float] = {}
 
     async def initialize(self) -> bool:
         """Initialize the scheduler: authenticate and set up resources."""
@@ -171,6 +180,17 @@ class TradingScheduler:
             "errors": [],
         }
 
+        # Reset daily counters at midnight UTC
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self._last_reset_date:
+            self._daily_trades = 0
+            self._daily_losses = 0
+            self._daily_wins = 0
+            self._daily_pnl = 0.0
+            self._recovery_mode = False
+            self._last_reset_date = today
+            logger.info("Daily counters reset for %s", today)
+
         async with async_session() as session:
             try:
                 # Get account balance
@@ -184,13 +204,66 @@ class TradingScheduler:
                         logger.warning("Failed to get balance: %s", e)
                         summary["errors"].append(f"Balance fetch: {e}")
 
+                # Update daily P&L from closed positions in DB
+                try:
+                    await self._update_daily_pnl(session)
+                except Exception as e:
+                    logger.warning("Daily P&L update failed: %s", e)
+
+                # Check if daily profit target reached — stop trading
+                if self._daily_pnl > 0 and account_balance > 0:
+                    daily_pnl_pct = (self._daily_pnl / account_balance) * 100
+                    if daily_pnl_pct >= settings.daily_profit_target_pct:
+                        logger.info(
+                            "Daily profit target reached: %.1f%% (target %.1f%%). Stopping trades.",
+                            daily_pnl_pct, settings.daily_profit_target_pct,
+                        )
+                        summary["status"] = "profit_target_reached"
+                        summary["daily_pnl_pct"] = daily_pnl_pct
+                        return summary
+
+                # Check daily trade limit (20 normal + 10 recovery)
+                max_trades = settings.max_daily_trades
+                if self._recovery_mode:
+                    max_trades += settings.recovery_extra_trades
+                    logger.info(
+                        "Recovery mode active: allowing %d extra trades (total %d)",
+                        settings.recovery_extra_trades, max_trades,
+                    )
+
+                # Enter recovery mode if we have net losses from today's trades
+                if self._daily_losses > self._daily_wins and self._daily_trades >= 5:
+                    if not self._recovery_mode:
+                        self._recovery_mode = True
+                        logger.info(
+                            "Entering RECOVERY MODE: %d losses vs %d wins, P&L=%.2f",
+                            self._daily_losses, self._daily_wins, self._daily_pnl,
+                        )
+
+                if self._daily_trades >= max_trades:
+                    logger.info(
+                        "Daily trade limit reached: %d/%d (recovery=%s)",
+                        self._daily_trades, max_trades, self._recovery_mode,
+                    )
+                    summary["status"] = "daily_limit_reached"
+                    summary["daily_trades"] = self._daily_trades
+                    # Still process trailing stops and position management below
+
+                summary["daily_stats"] = {
+                    "trades": self._daily_trades,
+                    "wins": self._daily_wins,
+                    "losses": self._daily_losses,
+                    "pnl": round(self._daily_pnl, 2),
+                    "recovery_mode": self._recovery_mode,
+                    "max_trades": max_trades,
+                }
+
                 # Auto-optimization check
                 if await self.auto_optimizer.should_optimize():
                     opt_df = await self.market_data.get_candles(symbols[0], timeframe, count=200)
                     if opt_df is not None and len(opt_df) >= 60:
                         opt_result = await self.auto_optimizer.optimize(session, opt_df)
                         if opt_result:
-                            # Apply optimized parameters to signal generator
                             self.signal_generator.ema_fast = opt_result.ema_fast
                             self.signal_generator.ema_slow = opt_result.ema_slow
                             self.signal_generator.rsi_buy_min = opt_result.rsi_buy_min
@@ -229,20 +302,37 @@ class TradingScheduler:
                     except Exception as e:
                         logger.warning("HTF trend update failed: %s", e)
 
-                # Process each symbol (only if session filter allows new trades)
-                if session_ok:
-                    for symbol in symbols:
+                # Rank symbols by momentum to prioritize best trending ones
+                ranked_symbols = await self._rank_symbols_by_momentum(
+                    symbols, timeframe,
+                )
+                summary["symbol_ranking"] = [
+                    {"symbol": s, "score": round(self._symbol_momentum.get(s, 0), 3)}
+                    for s in ranked_symbols[:10]
+                ]
+
+                # Process symbols (only if session allows AND under daily limit)
+                trades_this_cycle = 0
+                if session_ok and self._daily_trades < max_trades:
+                    for symbol in ranked_symbols:
+                        if self._daily_trades >= max_trades:
+                            logger.info("Daily trade limit %d reached mid-cycle", max_trades)
+                            break
                         try:
                             result = await self._process_symbol(
                                 session, symbol, timeframe, account_balance,
                             )
                             summary["symbol_results"][symbol] = result
+                            # Track if a trade was placed
+                            if result.get("trade") and result["trade"].get("status", "").upper() == "FILLED":
+                                self._daily_trades += 1
+                                trades_this_cycle += 1
                         except Exception as e:
                             error_msg = f"Error processing {symbol}: {e}"
                             summary["errors"].append(error_msg)
                             logger.error("%s\n%s", error_msg, traceback.format_exc())
                 else:
-                    summary["status"] = "session_blocked"
+                    summary["status"] = summary.get("status", "session_blocked")
 
                 # Update trailing stops for all symbols
                 try:
@@ -411,7 +501,7 @@ class TradingScheduler:
                     rsi_sell_max=self.signal_generator.rsi_sell_max,
                     max_spread=self.signal_generator.max_spread,
                 )
-                if strat_result.direction != "NO_TRADE" and strat_result.stop_loss is not None:
+                if strat_result.direction != "NO_TRADE" and strat_result.stop_loss is not None and strat_result.take_profit is not None:
                     # Override signal with the multi-strategy result
                     signal.direction = strat_result.direction
                     signal.stop_loss = strat_result.stop_loss
@@ -610,6 +700,102 @@ class TradingScheduler:
             )
 
         return result
+
+    # ---- Symbol ranking by momentum ----
+
+    async def _rank_symbols_by_momentum(
+        self, symbols: list[str], timeframe: str,
+    ) -> list[str]:
+        """Rank symbols by trend strength and momentum.
+
+        Scores each symbol based on:
+        - EMA20/EMA50 separation (trend strength)
+        - RSI momentum (away from 50 = stronger)
+        - ATR relative to price (volatility = opportunity)
+
+        Returns symbols sorted best-first so the bot prioritises
+        the strongest trending markets.
+        """
+        scores: dict[str, float] = {}
+        for symbol in symbols:
+            try:
+                df = await self.market_data.get_candles(symbol, timeframe, count=60)
+                if df is None or len(df) < 52:
+                    scores[symbol] = 0.0
+                    continue
+                closes = df["close"].astype(float)
+                ema20 = calculate_ema(closes, 20)
+                ema50 = calculate_ema(closes, 50)
+                e20 = float(ema20.iloc[-1])
+                e50 = float(ema50.iloc[-1])
+                price = float(closes.iloc[-1])
+
+                # Trend strength: EMA separation as % of price
+                trend_score = abs(e20 - e50) / e50 * 100 if e50 != 0 else 0
+
+                # Momentum: RSI distance from 50 (further = stronger move)
+                from app.strategy.indicators import calculate_rsi
+                rsi_series = calculate_rsi(closes, 14)
+                rsi_val = float(rsi_series.iloc[-1]) if pd.notna(rsi_series.iloc[-1]) else 50
+                momentum_score = abs(rsi_val - 50) / 50  # 0-1 scale
+
+                # Volatility: ATR as % of price (higher = more opportunity)
+                atr_series = calculate_atr(df["high"], df["low"], df["close"])
+                atr_val = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
+                vol_score = (atr_val / price * 100) if price > 0 else 0
+
+                # Combined score (weighted)
+                total = trend_score * 0.4 + momentum_score * 0.3 + vol_score * 0.3
+                scores[symbol] = total
+            except Exception as exc:
+                logger.warning("Symbol ranking failed for %s: %s", symbol, exc)
+                scores[symbol] = 0.0
+
+        self._symbol_momentum = scores
+
+        # Sort by score descending — best trending symbols first
+        ranked = sorted(symbols, key=lambda s: scores.get(s, 0), reverse=True)
+        top5 = [(s, round(scores.get(s, 0), 3)) for s in ranked[:5]]
+        logger.info("Symbol ranking top 5: %s", top5)
+        return ranked
+
+    # ---- Daily P&L tracking from closed positions ----
+
+    async def _update_daily_pnl(self, session: AsyncSession) -> None:
+        """Recalculate daily P&L from positions closed today."""
+        from sqlalchemy import select as sa_select
+        from app.db.models import Position
+
+        today_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        result = await session.execute(
+            sa_select(Position).where(
+                Position.is_open.is_(False),
+                Position.closed_at >= today_start,
+            )
+        )
+        closed_today = result.scalars().all()
+
+        pnl = 0.0
+        wins = 0
+        losses = 0
+        for pos in closed_today:
+            pos_pnl = pos.pnl or 0.0
+            pnl += pos_pnl
+            if pos_pnl > 0:
+                wins += 1
+            elif pos_pnl < 0:
+                losses += 1
+
+        self._daily_pnl = pnl
+        self._daily_wins = wins
+        self._daily_losses = losses
+        self._daily_trades = len(closed_today)
+        logger.info(
+            "Daily P&L update: %.2f (%d trades, %d wins, %d losses)",
+            pnl, len(closed_today), wins, losses,
+        )
 
     # ---- Multi-timeframe confirmation helpers ----
 

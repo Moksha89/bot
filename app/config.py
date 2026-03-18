@@ -210,6 +210,19 @@ class Settings:
     trailing_stop_breakeven_r: float = field(
         default_factory=lambda: _env_float("TRAILING_STOP_BREAKEVEN_R", 1.0)
     )
+    # Daily trade limits & recovery mode
+    max_daily_trades: int = field(
+        default_factory=lambda: _env_int("MAX_DAILY_TRADES", 20)
+    )
+    recovery_extra_trades: int = field(
+        default_factory=lambda: _env_int("RECOVERY_EXTRA_TRADES", 10)
+    )
+    daily_profit_target_pct: float = field(
+        default_factory=lambda: _env_float("DAILY_PROFIT_TARGET_PCT", 10.0)
+    )
+    min_trade_value: float = field(
+        default_factory=lambda: _env_float("MIN_TRADE_VALUE", 50.0)
+    )
 
 
 settings = Settings()
