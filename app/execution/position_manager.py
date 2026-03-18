@@ -290,7 +290,10 @@ class PositionManager:
                 result = await self.close_position(
                     session, pos, current_price, "auto_risk_close"
                 )
-                analysis["action_taken"] = "CLOSED"
+                if result.get("status") == "closed":
+                    analysis["action_taken"] = "CLOSED"
+                else:
+                    analysis["action_taken"] = "CLOSE_FAILED"
                 analysis["close_result"] = result
                 actions.append(analysis)
             else:
