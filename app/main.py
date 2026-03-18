@@ -24,7 +24,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("trading_bot.log"),
+        logging.FileHandler("logs/trading_bot.log"),
     ],
 )
 logger = logging.getLogger(__name__)
