@@ -133,6 +133,7 @@ def evaluate_buy_rules(
     rsi_min: float = 55,
     rsi_max: float = 70,
     max_spread: float = 5.0,
+    require_breakout: bool = True,
 ) -> tuple[bool, list[RuleResult]]:
     """
     Evaluate all buy conditions.
@@ -141,10 +142,11 @@ def evaluate_buy_rules(
     results = [
         check_ema_bullish(snapshot),
         check_rsi_buy_zone(snapshot, rsi_min, rsi_max),
-        check_breakout_high(snapshot),
         check_spread(snapshot, max_spread),
         check_no_open_long(snapshot),
     ]
+    if require_breakout:
+        results.insert(2, check_breakout_high(snapshot))
     all_passed = all(r.passed for r in results)
     return all_passed, results
 
@@ -154,6 +156,7 @@ def evaluate_sell_rules(
     rsi_min: float = 30,
     rsi_max: float = 45,
     max_spread: float = 5.0,
+    require_breakout: bool = True,
 ) -> tuple[bool, list[RuleResult]]:
     """
     Evaluate all sell conditions.
@@ -162,9 +165,10 @@ def evaluate_sell_rules(
     results = [
         check_ema_bearish(snapshot),
         check_rsi_sell_zone(snapshot, rsi_min, rsi_max),
-        check_breakout_low(snapshot),
         check_spread(snapshot, max_spread),
         check_no_open_short(snapshot),
     ]
+    if require_breakout:
+        results.insert(2, check_breakout_low(snapshot))
     all_passed = all(r.passed for r in results)
     return all_passed, results

@@ -57,6 +57,7 @@ class SignalGenerator:
         self.max_spread = settings.strategy.max_spread
         self.sl_atr_mult = settings.risk.sl_atr_multiplier
         self.tp_rr = settings.risk.tp_risk_reward
+        self.require_breakout = settings.strategy.require_breakout
 
     def generate(
         self,
@@ -119,6 +120,7 @@ class SignalGenerator:
             rsi_min=self.rsi_buy_min,
             rsi_max=self.rsi_buy_max,
             max_spread=self.max_spread,
+            require_breakout=self.require_breakout,
         )
         if buy_pass:
             sl = snapshot.close - (snapshot.atr * self.sl_atr_mult)
@@ -148,6 +150,7 @@ class SignalGenerator:
             rsi_min=self.rsi_sell_min,
             rsi_max=self.rsi_sell_max,
             max_spread=self.max_spread,
+            require_breakout=self.require_breakout,
         )
         if sell_pass:
             sl = snapshot.close + (snapshot.atr * self.sl_atr_mult)

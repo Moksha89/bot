@@ -63,6 +63,7 @@ class StrategyConfig:
     rsi_sell_min: float = field(default_factory=lambda: _env_float("RSI_SELL_MIN", 30))
     rsi_sell_max: float = field(default_factory=lambda: _env_float("RSI_SELL_MAX", 45))
     max_spread: float = field(default_factory=lambda: _env_float("MAX_SPREAD", 5.0))
+    require_breakout: bool = field(default_factory=lambda: _env_bool("REQUIRE_BREAKOUT", True))
 
 
 @dataclass
