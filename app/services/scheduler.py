@@ -176,9 +176,10 @@ class TradingScheduler:
 
                     # If AI rejects the trade, override signal to NO_TRADE
                     if ai_analysis["recommendation"] == "REJECT":
+                        original_direction = signal.direction
                         logger.warning(
                             "AI rejected %s signal for %s: %s",
-                            signal.direction,
+                            original_direction,
                             symbol,
                             ai_analysis["analysis"],
                         )
@@ -187,13 +188,14 @@ class TradingScheduler:
                             f"AI REJECTED: {ai_analysis['analysis']}"
                         )
                         await self.notifier.notify_risk_limit(
-                            f"AI rejected {signal.direction} on {symbol}: "
+                            f"AI rejected {original_direction} on {symbol}: "
                             f"{ai_analysis['analysis']}"
                         )
                     elif ai_analysis["recommendation"] == "HOLD":
+                        original_direction = signal.direction
                         logger.info(
                             "AI suggests HOLD for %s on %s, skipping trade",
-                            signal.direction,
+                            original_direction,
                             symbol,
                         )
                         signal.direction = "NO_TRADE"
@@ -207,7 +209,7 @@ class TradingScheduler:
                 )
                 summary["trade"] = result
 
-                if result and result.get("status") == "filled":
+                if result and result.get("status", "").upper() == "FILLED":
                     await self.notifier.notify_trade_opened(
                         direction=signal.direction,
                         symbol=symbol,

@@ -97,7 +97,13 @@ class RiskManager:
         return True, "No daily P&L data yet"
 
     async def check_consecutive_losses(self, session: AsyncSession) -> tuple[bool, str]:
-        """Check consecutive loss count."""
+        """Check consecutive loss count, accounting for cooldown period.
+
+        If the last N trades are all losses:
+        - If cooldown has NOT expired since the last loss, block trading.
+        - If cooldown HAS expired, allow trading to resume (the streak
+          can only be broken by placing a new trade).
+        """
         result = await session.execute(
             select(Position)
             .where(Position.is_open.is_(False))
@@ -110,8 +116,26 @@ class RiskManager:
             all_losses = all(p.result == TradeResult.LOSS for p in recent)
             if all_losses:
                 self._consecutive_losses = len(recent)
-                if recent:
-                    self._last_loss_time = recent[0].closed_at
+                last_loss_time = recent[0].closed_at
+                self._last_loss_time = last_loss_time
+
+                # Check if cooldown period has elapsed
+                if last_loss_time:
+                    cooldown_end = last_loss_time + timedelta(minutes=self.cooldown_minutes)
+                    now = datetime.now(timezone.utc)
+                    if now >= cooldown_end:
+                        # Cooldown expired — allow trading to resume
+                        return True, (
+                            f"Had {self.max_consecutive_losses} consecutive losses "
+                            f"but cooldown has expired. Trading resumed."
+                        )
+                    else:
+                        remaining = (cooldown_end - now).total_seconds() / 60
+                        return False, (
+                            f"Hit {self.max_consecutive_losses} consecutive losses. "
+                            f"Cooldown active ({remaining:.0f} min remaining)."
+                        )
+
                 return False, (
                     f"Hit {self.max_consecutive_losses} consecutive losses. "
                     f"Cooldown required."
@@ -119,16 +143,6 @@ class RiskManager:
 
         self._consecutive_losses = 0
         return True, f"Consecutive losses below limit ({self.max_consecutive_losses})"
-
-    async def check_cooldown(self) -> tuple[bool, str]:
-        """Check if we are still in a cooldown period after consecutive losses."""
-        if self._last_loss_time and self._consecutive_losses >= self.max_consecutive_losses:
-            cooldown_end = self._last_loss_time + timedelta(minutes=self.cooldown_minutes)
-            now = datetime.now(timezone.utc)
-            if now < cooldown_end:
-                remaining = (cooldown_end - now).total_seconds() / 60
-                return False, f"In cooldown period ({remaining:.0f} min remaining)"
-        return True, "No cooldown active"
 
     def calculate_position_size(
         self,
@@ -170,7 +184,6 @@ class RiskManager:
             await self.check_no_duplicate(session, symbol, direction),
             await self.check_daily_loss(session, account_balance),
             await self.check_consecutive_losses(session),
-            await self.check_cooldown(),
         ]
 
         for passed, msg in checks:

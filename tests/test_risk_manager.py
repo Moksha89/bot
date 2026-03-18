@@ -85,9 +85,12 @@ class TestKillSwitch:
         settings.kill_switch = original
 
 
-class TestCooldown:
-    @pytest.mark.asyncio
-    async def test_no_cooldown_by_default(self) -> None:
+class TestConsecutiveLossesAndCooldown:
+    """Cooldown logic is now integrated into check_consecutive_losses."""
+
+    def test_no_consecutive_losses_by_default(self) -> None:
         rm = RiskManager()
-        passed, msg = await rm.check_cooldown()
-        assert passed is True
+        # With no DB session / no closed positions, consecutive losses
+        # tracking starts at 0 and _last_loss_time is None.
+        assert rm._consecutive_losses == 0
+        assert rm._last_loss_time is None
