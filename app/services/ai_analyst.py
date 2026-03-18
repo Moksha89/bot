@@ -10,9 +10,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
+import numpy as np
 import pandas as pd
 
 from app.config import settings
+from app.strategy.indicators import calculate_ema, calculate_rsi, calculate_atr
 
 logger = logging.getLogger(__name__)
 
@@ -100,43 +102,116 @@ class AIAnalyst:
         spread: float,
         account_balance: float,
     ) -> dict:
-        """Prepare a concise market data summary for the AI."""
-        recent = df.tail(20)
+        """Prepare a deep-research market data summary for the AI."""
+        recent = df.tail(50)
+        closes = df["close"].astype(float)
+        highs = df["high"].astype(float)
+        lows = df["low"].astype(float)
 
-        # Price action summary
+        # Price action — last 10 candles for detail
         candles = []
-        for _, row in recent.iterrows():
+        for _, row in df.tail(10).iterrows():
+            o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+            body = "GREEN" if c >= o else "RED"
             candles.append({
-                "open": round(float(row["open"]), 5),
-                "high": round(float(row["high"]), 5),
-                "low": round(float(row["low"]), 5),
-                "close": round(float(row["close"]), 5),
+                "open": round(o, 5), "high": round(h, 5),
+                "low": round(l, 5), "close": round(c, 5),
+                "body": body,
             })
 
-        # Calculate key levels
-        last_20_high = float(recent["high"].max())
-        last_20_low = float(recent["low"].min())
         current_close = float(df.iloc[-1]["close"])
         prev_close = float(df.iloc[-2]["close"])
 
-        # Volume analysis if available
+        # ---- Deep indicators ----
+        # Bollinger Bands (20-period, 2 std)
+        sma20 = closes.rolling(20).mean()
+        std20 = closes.rolling(20).std()
+        bb_upper = float((sma20 + 2 * std20).iloc[-1]) if len(df) >= 20 else None
+        bb_lower = float((sma20 - 2 * std20).iloc[-1]) if len(df) >= 20 else None
+        bb_mid = float(sma20.iloc[-1]) if len(df) >= 20 else None
+        bb_width = round((bb_upper - bb_lower) / bb_mid * 100, 3) if bb_mid and bb_mid > 0 else None
+
+        # MACD (12, 26, 9)
+        ema12 = calculate_ema(closes, 12)
+        ema26 = calculate_ema(closes, 26)
+        macd_line = ema12 - ema26
+        macd_signal = calculate_ema(macd_line, 9)
+        macd_hist = macd_line - macd_signal
+        macd_data = {
+            "macd": round(float(macd_line.iloc[-1]), 5),
+            "signal": round(float(macd_signal.iloc[-1]), 5),
+            "histogram": round(float(macd_hist.iloc[-1]), 5),
+            "histogram_prev": round(float(macd_hist.iloc[-2]), 5),
+            "crossover": "bullish" if float(macd_hist.iloc[-1]) > 0 > float(macd_hist.iloc[-2]) else
+                         "bearish" if float(macd_hist.iloc[-1]) < 0 < float(macd_hist.iloc[-2]) else "none",
+        }
+
+        # Multi-period RSI
+        rsi_14 = calculate_rsi(closes, 14)
+        rsi_7 = calculate_rsi(closes, 7)
+        rsi_data = {
+            "rsi_14": round(float(rsi_14.iloc[-1]), 2),
+            "rsi_7": round(float(rsi_7.iloc[-1]), 2),
+            "rsi_14_prev": round(float(rsi_14.iloc[-2]), 2),
+            "divergence": self._detect_rsi_divergence(closes, rsi_14),
+        }
+
+        # ATR and volatility
+        atr = calculate_atr(highs, lows, closes)
+        atr_val = float(atr.iloc[-1])
+        atr_pct = round(atr_val / current_close * 100, 3) if current_close > 0 else 0
+
+        # Support / Resistance (pivot points from last 50 candles)
+        last_50_high = float(recent["high"].max())
+        last_50_low = float(recent["low"].min())
+        pivot = (last_50_high + last_50_low + current_close) / 3
+        r1 = 2 * pivot - last_50_low
+        s1 = 2 * pivot - last_50_high
+        r2 = pivot + (last_50_high - last_50_low)
+        s2 = pivot - (last_50_high - last_50_low)
+
+        # Fibonacci retracement levels (from recent swing)
+        fib_data = self._calculate_fibonacci(highs, lows, signal_direction)
+
+        # Candlestick pattern detection
+        patterns = self._detect_candlestick_patterns(df)
+
+        # Trend analysis
+        ema_20 = calculate_ema(closes, 20)
+        ema_50 = calculate_ema(closes, 50)
+        ema_200 = calculate_ema(closes, 200) if len(df) >= 200 else None
+        trend_data = {
+            "ema_20": round(float(ema_20.iloc[-1]), 5),
+            "ema_50": round(float(ema_50.iloc[-1]), 5),
+            "ema_200": round(float(ema_200.iloc[-1]), 5) if ema_200 is not None else "N/A",
+            "price_vs_ema20": "above" if current_close > float(ema_20.iloc[-1]) else "below",
+            "price_vs_ema50": "above" if current_close > float(ema_50.iloc[-1]) else "below",
+            "ema20_vs_ema50": "bullish" if float(ema_20.iloc[-1]) > float(ema_50.iloc[-1]) else "bearish",
+            "trend_strength": round(abs(float(ema_20.iloc[-1]) - float(ema_50.iloc[-1])) / current_close * 100, 3) if current_close > 0 else 0,
+        }
+
+        # Volume analysis
         volume_data = None
         if "volume" in df.columns:
-            avg_volume = float(recent["volume"].mean())
-            latest_volume = float(df.iloc[-1]["volume"])
+            vol = df["volume"].astype(float)
+            avg_vol_20 = float(vol.tail(20).mean())
+            latest_vol = float(vol.iloc[-1])
             volume_data = {
-                "latest": latest_volume,
-                "average_20": round(avg_volume, 0),
-                "ratio": round(latest_volume / avg_volume, 2) if avg_volume > 0 else 0,
+                "latest": latest_vol,
+                "average_20": round(avg_vol_20, 0),
+                "ratio": round(latest_vol / avg_vol_20, 2) if avg_vol_20 > 0 else 0,
+                "trend": "increasing" if float(vol.tail(5).mean()) > avg_vol_20 else "decreasing",
             }
 
-        # Price change stats
-        price_change_1 = round(
-            ((current_close - prev_close) / prev_close) * 100, 4
-        )
-        price_change_5 = round(
-            ((current_close - float(df.iloc[-6]["close"])) / float(df.iloc[-6]["close"])) * 100, 4
-        ) if len(df) >= 6 else 0
+        # Price change stats — multiple timeframes
+        changes = {}
+        for n, label in [(1, "1_candle"), (5, "5_candle"), (10, "10_candle"), (20, "20_candle")]:
+            if len(df) > n:
+                ref = float(df.iloc[-(n + 1)]["close"])
+                changes[f"{label}_pct"] = round((current_close - ref) / ref * 100, 4)
+
+        # Higher-highs / lower-lows structure (last 10 candles)
+        hh_ll = self._analyze_structure(highs.tail(10), lows.tail(10))
 
         return {
             "symbol": symbol,
@@ -144,56 +219,204 @@ class AIAnalyst:
             "signal_direction": signal_direction,
             "current_price": current_close,
             "spread": spread,
+            "spread_vs_atr_pct": round(spread / atr_val * 100, 1) if atr_val > 0 else 999,
             "account_balance": account_balance,
-            "recent_candles_count": len(candles),
-            "last_5_candles": candles[-5:],
+            "last_10_candles": candles,
             "indicators": indicators,
+            "trend": trend_data,
+            "macd": macd_data,
+            "rsi": rsi_data,
+            "bollinger_bands": {
+                "upper": round(bb_upper, 5) if bb_upper else None,
+                "middle": round(bb_mid, 5) if bb_mid else None,
+                "lower": round(bb_lower, 5) if bb_lower else None,
+                "width_pct": bb_width,
+                "price_position": "above_upper" if bb_upper and current_close > bb_upper else
+                                  "below_lower" if bb_lower and current_close < bb_lower else
+                                  "upper_half" if bb_mid and current_close > bb_mid else "lower_half",
+            },
+            "volatility": {"atr": round(atr_val, 5), "atr_pct": atr_pct},
             "support_resistance": {
-                "recent_high_20": round(last_20_high, 5),
-                "recent_low_20": round(last_20_low, 5),
-                "range": round(last_20_high - last_20_low, 5),
+                "pivot": round(pivot, 5),
+                "r1": round(r1, 5), "r2": round(r2, 5),
+                "s1": round(s1, 5), "s2": round(s2, 5),
+                "recent_high_50": round(last_50_high, 5),
+                "recent_low_50": round(last_50_low, 5),
             },
-            "price_change": {
-                "1_candle_pct": price_change_1,
-                "5_candle_pct": price_change_5,
-            },
+            "fibonacci": fib_data,
+            "candlestick_patterns": patterns,
+            "price_structure": hh_ll,
+            "price_change": changes,
             "volume": volume_data,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    def _build_analysis_prompt(self, market_summary: dict) -> str:
-        """Build the analysis prompt for the AI."""
-        return f"""You are an expert trading analyst. Analyze the following market data and provide your assessment.
+    # ---- Deep research helper methods ----
 
-MARKET DATA:
+    def _detect_rsi_divergence(
+        self, closes: pd.Series, rsi: pd.Series, lookback: int = 14,
+    ) -> str:
+        """Detect bullish/bearish RSI divergence."""
+        if len(closes) < lookback + 2:
+            return "insufficient_data"
+        price_tail = closes.iloc[-lookback:]
+        rsi_tail = rsi.iloc[-lookback:].dropna()
+        if len(rsi_tail) < lookback:
+            return "insufficient_data"
+        price_making_lower_low = float(price_tail.iloc[-1]) < float(price_tail.min())
+        rsi_making_higher_low = float(rsi_tail.iloc[-1]) > float(rsi_tail.min())
+        if price_making_lower_low and rsi_making_higher_low:
+            return "bullish_divergence"
+        price_making_higher_high = float(price_tail.iloc[-1]) > float(price_tail.max())
+        rsi_making_lower_high = float(rsi_tail.iloc[-1]) < float(rsi_tail.max())
+        if price_making_higher_high and rsi_making_lower_high:
+            return "bearish_divergence"
+        return "none"
+
+    def _calculate_fibonacci(
+        self, highs: pd.Series, lows: pd.Series, direction: str,
+    ) -> dict:
+        """Calculate Fibonacci retracement levels from recent swing."""
+        swing_high = float(highs.tail(50).max())
+        swing_low = float(lows.tail(50).min())
+        diff = swing_high - swing_low
+        if diff <= 0:
+            return {}
+        levels = {}
+        for ratio in [0.236, 0.382, 0.5, 0.618, 0.786]:
+            if direction == "BUY":  # retracement from high
+                levels[f"fib_{ratio}"] = round(swing_high - diff * ratio, 5)
+            else:
+                levels[f"fib_{ratio}"] = round(swing_low + diff * ratio, 5)
+        levels["swing_high"] = round(swing_high, 5)
+        levels["swing_low"] = round(swing_low, 5)
+        return levels
+
+    def _detect_candlestick_patterns(self, df: pd.DataFrame) -> list[str]:
+        """Detect common candlestick patterns in the last 3 candles."""
+        patterns: list[str] = []
+        if len(df) < 3:
+            return patterns
+        c = df.iloc[-1]
+        p = df.iloc[-2]
+        pp = df.iloc[-3]
+        o, h, l, cl = float(c["open"]), float(c["high"]), float(c["low"]), float(c["close"])
+        po, ph, pl, pcl = float(p["open"]), float(p["high"]), float(p["low"]), float(p["close"])
+        body = abs(cl - o)
+        full_range = h - l if h != l else 0.0001
+        upper_wick = h - max(o, cl)
+        lower_wick = min(o, cl) - l
+
+        # Doji
+        if body / full_range < 0.1:
+            patterns.append("doji")
+        # Hammer (bullish)
+        if lower_wick > 2 * body and upper_wick < body and cl > o:
+            patterns.append("hammer")
+        # Shooting star (bearish)
+        if upper_wick > 2 * body and lower_wick < body and cl < o:
+            patterns.append("shooting_star")
+        # Bullish engulfing
+        if pcl < po and cl > o and cl > po and o < pcl:
+            patterns.append("bullish_engulfing")
+        # Bearish engulfing
+        if pcl > po and cl < o and cl < po and o > pcl:
+            patterns.append("bearish_engulfing")
+        # Morning star
+        if float(pp["close"]) < float(pp["open"]) and abs(pcl - po) / (ph - pl if ph != pl else 0.0001) < 0.3 and cl > o:
+            patterns.append("morning_star")
+        # Evening star
+        if float(pp["close"]) > float(pp["open"]) and abs(pcl - po) / (ph - pl if ph != pl else 0.0001) < 0.3 and cl < o:
+            patterns.append("evening_star")
+
+        return patterns
+
+    def _analyze_structure(
+        self, highs: pd.Series, lows: pd.Series,
+    ) -> dict:
+        """Analyze higher-highs/lower-lows structure."""
+        h_list = highs.tolist()
+        l_list = lows.tolist()
+        hh = sum(1 for i in range(1, len(h_list)) if h_list[i] > h_list[i - 1])
+        ll = sum(1 for i in range(1, len(l_list)) if l_list[i] < l_list[i - 1])
+        hl = sum(1 for i in range(1, len(l_list)) if l_list[i] > l_list[i - 1])
+        lh = sum(1 for i in range(1, len(h_list)) if h_list[i] < h_list[i - 1])
+        total = len(h_list) - 1 if len(h_list) > 1 else 1
+        if hh / total >= 0.6 and hl / total >= 0.6:
+            structure = "uptrend"
+        elif ll / total >= 0.6 and lh / total >= 0.6:
+            structure = "downtrend"
+        else:
+            structure = "ranging"
+        return {
+            "structure": structure,
+            "higher_highs": hh,
+            "lower_lows": ll,
+            "higher_lows": hl,
+            "lower_highs": lh,
+        }
+
+    def _build_analysis_prompt(self, market_summary: dict) -> str:
+        """Build the deep-research analysis prompt for the AI."""
+        return f"""You are an elite quantitative trading analyst with 20 years of experience.
+Your job: perform DEEP RESEARCH on this trade setup and decide whether it is worth risking real money.
+
+COMPLETE MARKET DATA:
 {json.dumps(market_summary, indent=2)}
 
-ANALYSIS REQUIREMENTS:
-1. Evaluate the current market conditions based on the provided data
-2. Assess whether the {market_summary['signal_direction']} signal aligns with the overall market structure
-3. Check for potential risks: overextension, divergences, key levels, spread concerns
-4. Consider volume confirmation if available
-5. Evaluate trend strength from the indicator values
-6. Look for any red flags that would warrant rejecting this trade
+DEEP RESEARCH CHECKLIST — you MUST evaluate ALL of these:
+
+1. TREND ANALYSIS
+   - Is the trade direction aligned with EMA 20/50/200 trend structure?
+   - Is the MACD confirming momentum? Any MACD crossover?
+   - What does the price structure (higher-highs/lows) tell us?
+
+2. MOMENTUM & OSCILLATORS
+   - RSI-14 and RSI-7 alignment — are both confirming the direction?
+   - Any RSI divergence detected? (bullish/bearish divergence is a strong signal)
+   - Is RSI in overbought (>70) or oversold (<30) territory?
+
+3. VOLATILITY & RISK
+   - Bollinger Band position — is price near the bands? Squeeze or expansion?
+   - ATR as % of price — is volatility appropriate for this trade?
+   - Spread vs ATR — is the spread eating too much of the expected move?
+
+4. SUPPORT & RESISTANCE
+   - Where are the pivot points, R1, R2, S1, S2?
+   - Is price near a Fibonacci retracement level?
+   - Is the trade direction aligned with key levels or fighting against them?
+
+5. CANDLESTICK PATTERNS
+   - Any reversal patterns detected? (engulfing, hammer, shooting star, doji)
+   - Do the patterns confirm or contradict the signal?
+
+6. VOLUME (if available)
+   - Is volume confirming the move? Volume increasing with price = strong.
+   - Low volume = weak move, high risk of reversal.
+
+7. RISK-REWARD ASSESSMENT
+   - Given ATR and key levels, what is the realistic risk-reward ratio?
+   - Is this a HIGH-PROBABILITY setup or a marginal one?
 
 RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
 {{
     "recommendation": "CONFIRM" or "REJECT" or "HOLD",
     "confidence": <number 0-100>,
-    "analysis": "<2-3 sentence analysis of market conditions and why you recommend this action>",
-    "risk_notes": "<any specific risk warnings or concerns, or 'None' if no concerns>"
+    "analysis": "<detailed 3-5 sentence analysis covering trend, momentum, key levels, and patterns>",
+    "risk_notes": "<specific risk warnings: divergences, key levels, overextension, spread concerns>",
+    "key_levels": "<nearest support and resistance levels that matter for this trade>",
+    "trade_quality": "A+" or "A" or "B" or "C" or "D"
 }}
 
-Rules:
-- CONFIRM: The signal looks good, proceed with the trade
-- REJECT: Market conditions don't support this trade, skip it
-- HOLD: Wait for better conditions or more confirmation
-- Be balanced - only REJECT if there is a clear technical reason (e.g., strong divergence, price at major resistance for a BUY, overextended move)
-- CONFIRM if the signal aligns with the trend and indicators support it
-- HOLD only if conditions are genuinely ambiguous
-- Do NOT reject simply because conditions aren't perfect — no trade setup is ever perfect
-- Consider the spread relative to expected move
-- Factor in trend alignment with the signal direction"""
+GRADING RULES:
+- A+ (CONFIRM, 85-100%): Perfect alignment — trend + momentum + patterns + levels all agree
+- A (CONFIRM, 70-85%): Strong setup — most factors agree, minor concerns
+- B (CONFIRM, 60-70%): Decent setup — proceed with caution, some conflicting signals
+- C (HOLD, 40-60%): Marginal — too many conflicting signals, wait for clarity
+- D (REJECT, 0-40%): Bad setup — clear reasons to avoid (divergence, wrong side of key level, etc.)
+
+Only CONFIRM if grade is B or above. REJECT grade D. HOLD grade C.
+Be STRICT — we are trading with real money. Quality over quantity."""
 
     async def _call_openrouter(self, prompt: str, model: str = "") -> str:
         """Call OpenRouter API and return the response text."""
@@ -209,18 +432,19 @@ Rules:
                 {
                     "role": "system",
                     "content": (
-                        "You are a professional trading analyst AI. "
-                        "You analyze market data and provide precise, "
-                        "actionable trading recommendations. "
-                        "Always respond in the exact JSON format requested. "
-                        "Be balanced — CONFIRM trades that have reasonable technical support. "
-                        "Only REJECT when there is a clear, specific technical reason to avoid the trade."
+                        "You are an elite quantitative trading analyst. "
+                        "You perform deep technical research on every trade setup. "
+                        "You analyze trend structure, momentum, oscillators, volatility, "
+                        "support/resistance, Fibonacci levels, candlestick patterns, and volume. "
+                        "You are STRICT — only approve high-quality setups. "
+                        "Real money is at stake. Quality over quantity. "
+                        "Always respond in the exact JSON format requested."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.3,
-            "max_tokens": 500,
+            "temperature": 0.2,
+            "max_tokens": 1000,
         }
 
         async with aiohttp.ClientSession() as session:
