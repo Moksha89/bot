@@ -224,6 +224,7 @@ class OrderManager:
         adj_sl = stop_loss
         adj_tp = take_profit
         adj_size = size
+        max_size_by_margin: float = float("inf")  # updated by margin cap below
 
         # Determine rounding precision based on price magnitude
         ref_price = bid if direction == "BUY" else ask
@@ -316,15 +317,23 @@ class OrderManager:
             )
             adj_size = max_deal_size
 
-        # Enforce minimum deal size
+        # Enforce minimum deal size — but never force it above what margin allows.
+        # If the margin-capped size is below the exchange minimum, flag it so
+        # the caller can skip the order instead of getting a RISK_CHECK rejection.
         if adj_size < min_deal_size:
-            warnings.append(
-                f"Size {adj_size:.4f} below min {min_deal_size}, using min"
-            )
-            adj_size = min_deal_size
+            if max_size_by_margin < min_deal_size:
+                warnings.append(
+                    f"Insufficient margin: max_size={adj_size:.4f} < min_deal={min_deal_size}"
+                )
+                adj_size = 0  # signal to caller: skip this trade
+            else:
+                warnings.append(
+                    f"Size {adj_size:.4f} below min {min_deal_size}, using min"
+                )
+                adj_size = min_deal_size
 
         # Round size down to increment
-        if min_size_increment > 0:
+        if min_size_increment > 0 and adj_size > 0:
             adj_size = math.floor(adj_size / min_size_increment) * min_size_increment
             if adj_size < min_deal_size:
                 adj_size = min_deal_size
@@ -346,6 +355,15 @@ class OrderManager:
         adj_size = size
         try:
             constraints = await self.client.get_market_constraints(signal.symbol)
+
+            # Use *available* margin (not total balance) so that margin
+            # already consumed by open positions is taken into account.
+            try:
+                acct = await self.client.get_account_balance()
+                available_margin = acct.get("available", account_balance)
+            except Exception:
+                available_margin = account_balance
+
             sl, tp, adj_size, adj_warnings = self._validate_and_adjust_order(
                 direction=signal.direction,
                 close_price=signal.close_price,
@@ -353,13 +371,20 @@ class OrderManager:
                 take_profit=signal.take_profit,
                 size=size,
                 constraints=constraints,
-                account_balance=account_balance,
+                account_balance=available_margin,
             )
             if adj_warnings:
                 logger.info(
                     "Order adjusted for %s %s: %s",
                     signal.direction, signal.symbol, adj_warnings,
                 )
+            # If size was zeroed out, skip the trade entirely
+            if adj_size <= 0:
+                logger.warning(
+                    "Skipping %s %s: insufficient margin (available=%.2f)",
+                    signal.direction, signal.symbol, available_margin,
+                )
+                return {"status": "skipped", "reason": "insufficient margin"}
         except Exception as e:
             logger.warning(
                 "Could not fetch market constraints for %s, using original values: %s",
