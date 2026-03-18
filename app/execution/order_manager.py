@@ -185,6 +185,18 @@ class OrderManager:
             "tp": signal.take_profit,
         }
 
+    @staticmethod
+    def _floor_to(value: float, precision: int) -> float:
+        """Round value DOWN (toward negative infinity) to given decimal places."""
+        factor = 10 ** precision
+        return math.floor(value * factor) / factor
+
+    @staticmethod
+    def _ceil_to(value: float, precision: int) -> float:
+        """Round value UP (toward positive infinity) to given decimal places."""
+        factor = 10 ** precision
+        return math.ceil(value * factor) / factor
+
     def _validate_and_adjust_order(
         self,
         direction: str,
@@ -206,14 +218,25 @@ class OrderManager:
         min_stop_points = constraints["min_stop_points"]
         min_deal_size = constraints["min_deal_size"]
         min_size_increment = constraints["min_size_increment"]
+        max_deal_size = constraints.get("max_deal_size", 0)
 
         warnings: list[str] = []
         adj_sl = stop_loss
         adj_tp = take_profit
         adj_size = size
 
-        # Calculate minimum stop distance as an absolute value
+        # Determine rounding precision based on price magnitude
         ref_price = bid if direction == "BUY" else ask
+        if ref_price > 1000:
+            precision = 1
+        elif ref_price > 10:
+            precision = 2
+        elif ref_price > 1:
+            precision = 3
+        else:
+            precision = 5
+
+        # Calculate minimum stop distance as an absolute value
         if min_stop_pct > 0:
             min_distance = ref_price * (min_stop_pct / 100.0)
         elif min_stop_points > 0:
@@ -221,12 +244,15 @@ class OrderManager:
         else:
             min_distance = 0.0
 
-        # Add a small buffer (50% extra) to avoid edge-case rejections
-        safe_distance = min_distance * 1.5 if min_distance > 0 else 0.0
+        # Use the spread as a floor for the buffer — SL must be at least
+        # one full spread away from bid/ask to survive price movement
+        # between the constraint check and the order placement.
+        spread = abs(ask - bid)
+        buffer = max(min_distance * 3.0, spread)
 
         # For BUY: SL must be below bid; for SELL: SL must be above ask
         if direction == "BUY":
-            max_allowed_sl = bid - safe_distance
+            max_allowed_sl = bid - buffer
             if adj_sl > max_allowed_sl:
                 original_sl = adj_sl
                 adj_sl = max_allowed_sl
@@ -239,8 +265,12 @@ class OrderManager:
                 warnings.append(
                     f"SL adjusted {original_sl:.5f}->{adj_sl:.5f} (bid={bid})"
                 )
+            # Round BUY SL DOWN so it stays further from price
+            adj_sl = self._floor_to(adj_sl, precision)
+            # Round BUY TP UP for a slightly better target
+            adj_tp = self._ceil_to(adj_tp, precision)
         else:  # SELL
-            min_allowed_sl = ask + safe_distance
+            min_allowed_sl = ask + buffer
             if adj_sl < min_allowed_sl:
                 original_sl = adj_sl
                 adj_sl = min_allowed_sl
@@ -252,12 +282,36 @@ class OrderManager:
                 warnings.append(
                     f"SL adjusted {original_sl:.5f}->{adj_sl:.5f} (ask={ask})"
                 )
+            # Round SELL SL UP so it stays further from price
+            adj_sl = self._ceil_to(adj_sl, precision)
+            # Round SELL TP DOWN for a slightly better target
+            adj_tp = self._floor_to(adj_tp, precision)
 
-        # Recalculate position size based on wider stop
+        # Recalculate position size based on (possibly wider) stop
         sl_distance = abs(close_price - adj_sl)
         if sl_distance > 0:
             risk_amount = account_balance * settings.risk.risk_per_trade
             adj_size = risk_amount / sl_distance
+
+        # Cap position size by notional value relative to account balance.
+        # Even with leverage, the notional value should not exceed a
+        # conservative multiple of the account to avoid margin rejections.
+        max_leverage_factor = 20  # conservative; most retail is 30:1
+        if ref_price > 0:
+            max_notional = account_balance * max_leverage_factor
+            max_size_by_margin = max_notional / ref_price
+            if adj_size > max_size_by_margin:
+                warnings.append(
+                    f"Size {adj_size:.2f} exceeds margin cap {max_size_by_margin:.2f}"
+                )
+                adj_size = max_size_by_margin
+
+        # Cap by exchange max deal size
+        if max_deal_size > 0 and adj_size > max_deal_size:
+            warnings.append(
+                f"Size {adj_size:.2f} exceeds max deal size {max_deal_size}"
+            )
+            adj_size = max_deal_size
 
         # Enforce minimum deal size
         if adj_size < min_deal_size:
@@ -266,23 +320,11 @@ class OrderManager:
             )
             adj_size = min_deal_size
 
-        # Round size to increment
+        # Round size down to increment
         if min_size_increment > 0:
             adj_size = math.floor(adj_size / min_size_increment) * min_size_increment
             if adj_size < min_deal_size:
                 adj_size = min_deal_size
-
-        # Round SL/TP to reasonable precision
-        if ref_price > 1000:
-            precision = 1
-        elif ref_price > 10:
-            precision = 2
-        elif ref_price > 1:
-            precision = 3
-        else:
-            precision = 5
-        adj_sl = round(adj_sl, precision)
-        adj_tp = round(adj_tp, precision)
 
         return adj_sl, adj_tp, adj_size, "; ".join(warnings)
 

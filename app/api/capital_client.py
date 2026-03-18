@@ -294,6 +294,9 @@ class CapitalClient:
         min_inc = rules.get("minSizeIncrement", {})
         min_size_increment = float(min_inc.get("value", 0.01))
 
+        max_deal = rules.get("maxDealSize", {})
+        max_deal_size = float(max_deal.get("value", 0))
+
         return {
             "bid": float(snapshot.get("bid", 0)),
             "ask": float(snapshot.get("offer", 0)),
@@ -301,6 +304,7 @@ class CapitalClient:
             "min_stop_points": min_stop_points,
             "min_deal_size": min_deal_size,
             "min_size_increment": min_size_increment,
+            "max_deal_size": max_deal_size,
         }
 
     # --- Orders ---
