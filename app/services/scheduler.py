@@ -312,6 +312,8 @@ class TradingScheduler:
         )
 
         if signal.direction == "NO_TRADE":
+            # Record NO_TRADE signal to DB so it appears on dashboard
+            await self.order_manager.process_signal(session, signal, account_balance)
             return result
 
         # ML scoring

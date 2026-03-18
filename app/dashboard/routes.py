@@ -24,6 +24,7 @@ from app.db.models import (
     TradeResult,
 )
 from app.db.session import async_session
+from app.api.capital_client import CapitalClient, CapitalAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,32 @@ async def get_bot_status() -> BotStatus:
             "ai_analysis": settings.ai_analysis_enabled,
         },
     )
+
+
+@router.get("/api/account")
+async def get_account_info() -> dict:
+    """Get live account balance from Capital.com."""
+    if settings.trading.mode not in ("demo", "live", "analysis"):
+        return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": ""}
+    try:
+        client = CapitalClient()
+        await client.authenticate()
+        balance = await client.get_account_balance()
+        # Also get currency from accounts endpoint
+        accounts_data = await client.get_accounts()
+        accounts = accounts_data.get("accounts", [])
+        currency = accounts[0].get("currency", "") if accounts else ""
+        await client.close()
+        return {
+            "balance": balance.get("balance", 0),
+            "equity": balance.get("equity", 0),
+            "available": balance.get("available", 0),
+            "pnl": balance.get("pnl", 0),
+            "currency": currency,
+        }
+    except (CapitalAPIError, Exception) as e:
+        logger.error("Failed to fetch account info: %s", e)
+        return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": "", "error": str(e)}
 
 
 @router.get("/api/stats", response_model=DashboardStats)

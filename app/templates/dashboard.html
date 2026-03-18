@@ -56,6 +56,22 @@
     </div>
 
     <div class="container">
+        <!-- Account Balance -->
+        <div class="grid" id="accountGrid">
+            <div class="card" style="border-color:#38bdf8">
+                <h3>Account Balance</h3>
+                <div class="value positive" id="accountBalance">Loading...</div>
+            </div>
+            <div class="card">
+                <h3>Available Funds</h3>
+                <div class="value neutral" id="accountAvailable">--</div>
+            </div>
+            <div class="card">
+                <h3>Unrealized P&L</h3>
+                <div class="value neutral" id="accountPnl">--</div>
+            </div>
+        </div>
+
         <!-- Status Cards -->
         <div class="grid" id="statsGrid">
             <div class="card">
@@ -269,8 +285,22 @@
             await loadStatus();
         }
 
+        async function loadAccount() {
+            const data = await fetchJSON('/dashboard/api/account');
+            if (!data) return;
+            const cur = data.currency || '';
+            const balEl = document.getElementById('accountBalance');
+            balEl.textContent = data.balance.toFixed(2) + ' ' + cur;
+            balEl.className = 'value positive';
+            const avEl = document.getElementById('accountAvailable');
+            avEl.textContent = data.available.toFixed(2) + ' ' + cur;
+            const pnlEl = document.getElementById('accountPnl');
+            pnlEl.textContent = data.pnl.toFixed(2) + ' ' + cur;
+            pnlEl.className = 'value ' + pnlClass(data.pnl);
+        }
+
         async function refreshAll() {
-            await Promise.all([loadStatus(), loadStats(), loadPositions(), loadSignals(), loadErrors()]);
+            await Promise.all([loadAccount(), loadStatus(), loadStats(), loadPositions(), loadSignals(), loadErrors()]);
         }
 
         refreshAll();
