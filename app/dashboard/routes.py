@@ -6,7 +6,7 @@ Provides endpoints for monitoring bot status, trades, and P&L.
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -448,52 +448,176 @@ async def get_live_positions() -> dict:
 
 @router.get("/api/trade-history")
 async def get_trade_history(limit: int = 100) -> list[dict]:
-    """Get full trade history with time, profit/loss, duration, and details."""
-    async with async_session() as session:
-        result = await session.execute(
-            select(Position)
-            .where(Position.is_open.is_(False))
-            .order_by(desc(Position.closed_at))
-            .limit(limit)
+    """Get full trade history from Capital.com API + local DB, with P&L and duration."""
+    history: list[dict] = []
+
+    # Try to fetch from Capital.com API first (real data)
+    try:
+        client = await _get_shared_client()
+        now = datetime.now(timezone.utc)
+        from_date = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+        to_date = now.strftime("%Y-%m-%dT%H:%M:%S")
+        transactions = await client.get_transaction_history(
+            from_date=from_date, to_date=to_date, transaction_type="ALL"
         )
-        positions = result.scalars().all()
-
-        history = []
-        for p in positions:
+        for t in transactions:
+            pnl = float(t.get("profitAndLoss", 0) or 0)
+            size = float(t.get("size", 0) or 0)
+            open_level = float(t.get("openLevel", 0) or 0)
+            close_level = float(t.get("closeLevel", 0) or 0)
+            invested = open_level * abs(size) if open_level and size else 0
+            result = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+            opened = t.get("openDateUtc", t.get("dateUtc", ""))
+            closed = t.get("dateUtc", "")
             duration = ""
-            if p.opened_at and p.closed_at:
-                delta = p.closed_at - p.opened_at
-                total_seconds = int(delta.total_seconds())
-                hours, remainder = divmod(total_seconds, 3600)
-                minutes, seconds = divmod(remainder, 60)
-                if hours > 0:
-                    duration = f"{hours}h {minutes}m"
-                elif minutes > 0:
-                    duration = f"{minutes}m {seconds}s"
-                else:
-                    duration = f"{seconds}s"
-
-            invested = (p.entry_price or 0) * (p.size or 0)
+            if opened and closed:
+                try:
+                    o = datetime.fromisoformat(opened.replace("Z", "+00:00"))
+                    c = datetime.fromisoformat(closed.replace("Z", "+00:00"))
+                    delta = c - o
+                    total_seconds = int(delta.total_seconds())
+                    if total_seconds > 0:
+                        hours, remainder = divmod(total_seconds, 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        if hours > 0:
+                            duration = f"{hours}h {minutes}m"
+                        elif minutes > 0:
+                            duration = f"{minutes}m {seconds}s"
+                        else:
+                            duration = f"{seconds}s"
+                except (ValueError, TypeError):
+                    pass
 
             history.append({
-                "id": p.id,
-                "symbol": p.symbol,
-                "direction": p.direction,
-                "size": p.size,
-                "entry_price": p.entry_price,
-                "exit_price": p.exit_price,
-                "stop_loss": p.stop_loss,
-                "take_profit": p.take_profit,
+                "id": t.get("reference", ""),
+                "symbol": t.get("instrumentName", ""),
+                "direction": t.get("direction", ""),
+                "size": abs(size),
+                "entry_price": open_level,
+                "exit_price": close_level,
+                "stop_loss": None,
+                "take_profit": None,
                 "invested": round(invested, 2),
-                "pnl": round(p.pnl, 2) if p.pnl is not None else 0,
-                "result": p.result.value if p.result else "UNKNOWN",
-                "opened_at": p.opened_at.isoformat() if p.opened_at else "",
-                "closed_at": p.closed_at.isoformat() if p.closed_at else "",
+                "pnl": round(pnl, 2),
+                "result": result,
+                "opened_at": opened,
+                "closed_at": closed,
                 "duration": duration,
-                "deal_id": p.deal_id or "",
+                "deal_id": t.get("reference", ""),
+                "source": "capital_api",
             })
+    except Exception as e:
+        logger.warning("Could not fetch Capital.com transaction history: %s", e)
 
-        return history
+    # If no API data, fall back to local DB
+    if not history:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Position)
+                .where(Position.is_open.is_(False))
+                .order_by(desc(Position.closed_at))
+                .limit(limit)
+            )
+            positions = result.scalars().all()
+
+            for p in positions:
+                duration = ""
+                if p.opened_at and p.closed_at:
+                    delta = p.closed_at - p.opened_at
+                    total_seconds = int(delta.total_seconds())
+                    hours, remainder = divmod(total_seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    if hours > 0:
+                        duration = f"{hours}h {minutes}m"
+                    elif minutes > 0:
+                        duration = f"{minutes}m {seconds}s"
+                    else:
+                        duration = f"{seconds}s"
+
+                invested = (p.entry_price or 0) * (p.size or 0)
+
+                history.append({
+                    "id": p.id,
+                    "symbol": p.symbol,
+                    "direction": p.direction,
+                    "size": p.size,
+                    "entry_price": p.entry_price,
+                    "exit_price": p.exit_price,
+                    "stop_loss": p.stop_loss,
+                    "take_profit": p.take_profit,
+                    "invested": round(invested, 2),
+                    "pnl": round(p.pnl, 2) if p.pnl is not None else 0,
+                    "result": p.result.value if p.result else "UNKNOWN",
+                    "opened_at": p.opened_at.isoformat() if p.opened_at else "",
+                    "closed_at": p.closed_at.isoformat() if p.closed_at else "",
+                    "duration": duration,
+                    "deal_id": p.deal_id or "",
+                    "source": "local_db",
+                })
+
+    return history
+
+
+@router.get("/api/today-pnl")
+async def get_today_pnl() -> dict:
+    """Get today's P&L summary with individual trade breakdown from Capital.com."""
+    today_trades: list[dict] = []
+    total_profit = 0.0
+    total_loss = 0.0
+
+    try:
+        client = await _get_shared_client()
+        now = datetime.now(timezone.utc)
+        from_date = now.strftime("%Y-%m-%dT00:00:00")
+        to_date = now.strftime("%Y-%m-%dT%H:%M:%S")
+        transactions = await client.get_transaction_history(
+            from_date=from_date, to_date=to_date, transaction_type="ALL"
+        )
+        for t in transactions:
+            pnl = float(t.get("profitAndLoss", 0) or 0)
+            size = float(t.get("size", 0) or 0)
+            open_level = float(t.get("openLevel", 0) or 0)
+            close_level = float(t.get("closeLevel", 0) or 0)
+            invested = open_level * abs(size) if open_level and size else 0
+            result = "PROFIT" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+
+            if pnl > 0:
+                total_profit += pnl
+            elif pnl < 0:
+                total_loss += pnl
+
+            today_trades.append({
+                "symbol": t.get("instrumentName", ""),
+                "direction": t.get("direction", ""),
+                "size": abs(size),
+                "entry_price": open_level,
+                "exit_price": close_level,
+                "invested": round(invested, 2),
+                "pnl": round(pnl, 2),
+                "result": result,
+                "closed_at": t.get("dateUtc", ""),
+                "reference": t.get("reference", ""),
+            })
+    except Exception as e:
+        logger.warning("Could not fetch today's P&L from Capital.com: %s", e)
+
+    wins = sum(1 for t in today_trades if t["result"] == "PROFIT")
+    losses = sum(1 for t in today_trades if t["result"] == "LOSS")
+    total_count = len(today_trades)
+    net_pnl = total_profit + total_loss
+
+    return {
+        "trades": today_trades,
+        "summary": {
+            "total_trades": total_count,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round((wins / total_count * 100) if total_count > 0 else 0, 1),
+            "total_profit": round(total_profit, 2),
+            "total_loss": round(total_loss, 2),
+            "net_pnl": round(net_pnl, 2),
+        },
+    }
 
 
 @router.get("/api/performance")

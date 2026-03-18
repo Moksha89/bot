@@ -87,7 +87,7 @@ class RiskConfig:
         default_factory=lambda: _env_int("COOLDOWN_MINUTES", 5)
     )
     max_open_trades: int = field(
-        default_factory=lambda: _env_int("MAX_OPEN_TRADES", 10)
+        default_factory=lambda: _env_int("MAX_OPEN_TRADES", 999)
     )
     sl_atr_multiplier: float = field(
         default_factory=lambda: _env_float("SL_ATR_MULTIPLIER", 1.5)
@@ -102,7 +102,7 @@ class RiskConfig:
         default_factory=lambda: _env_float("MAX_CORRELATED_EXPOSURE", 0.25)
     )
     max_total_positions: int = field(
-        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 25)
+        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 999)
     )
 
 

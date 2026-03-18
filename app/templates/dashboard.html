@@ -61,6 +61,26 @@
         .history-stat { background: #0f172a; padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.85rem; }
         .history-stat strong { font-size: 1.1rem; }
         .table-scroll { overflow-x: auto; }
+        .row-profit { background: rgba(52, 211, 153, 0.1); }
+        .row-profit td { border-bottom-color: rgba(52, 211, 153, 0.2); }
+        .row-loss { background: rgba(248, 113, 113, 0.1); }
+        .row-loss td { border-bottom-color: rgba(248, 113, 113, 0.2); }
+        .row-breakeven { background: rgba(251, 191, 36, 0.05); }
+        .filter-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center; }
+        .filter-btn { padding: 0.4rem 1rem; border: 1px solid #475569; border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem; font-weight: 600; background: transparent; color: #94a3b8; transition: all 0.2s; }
+        .filter-btn:hover { border-color: #38bdf8; color: #e2e8f0; }
+        .filter-btn.active { background: #38bdf8; color: #0f172a; border-color: #38bdf8; }
+        .filter-btn.filter-profit.active { background: #34d399; border-color: #34d399; }
+        .filter-btn.filter-loss.active { background: #f87171; border-color: #f87171; }
+        .today-pnl-banner { display: flex; gap: 1rem; padding: 1rem 1.5rem; border-radius: 0.75rem; margin-bottom: 1.5rem; align-items: center; flex-wrap: wrap; }
+        .today-pnl-banner.today-profit { background: linear-gradient(135deg, rgba(52,211,153,0.15), rgba(52,211,153,0.05)); border: 1px solid rgba(52,211,153,0.3); }
+        .today-pnl-banner.today-loss { background: linear-gradient(135deg, rgba(248,113,113,0.15), rgba(248,113,113,0.05)); border: 1px solid rgba(248,113,113,0.3); }
+        .today-pnl-banner.today-neutral { background: linear-gradient(135deg, rgba(148,163,184,0.15), rgba(148,163,184,0.05)); border: 1px solid rgba(148,163,184,0.3); }
+        .today-pnl-value { font-size: 2rem; font-weight: 800; }
+        .today-pnl-label { font-size: 0.85rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+        .today-pnl-stat { text-align: center; min-width: 80px; }
+        .today-pnl-stat .stat-value { font-size: 1.2rem; font-weight: 700; }
+        .today-pnl-stat .stat-label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
     </style>
 </head>
 <body>
@@ -74,6 +94,20 @@
     </div>
 
     <div class="container">
+        <!-- Today's P&L Banner -->
+        <div class="today-pnl-banner today-neutral" id="todayPnlBanner">
+            <div>
+                <div class="today-pnl-label">Today's P&amp;L</div>
+                <div class="today-pnl-value neutral" id="todayNetPnl">Loading...</div>
+            </div>
+            <div class="today-pnl-stat"><div class="stat-value" id="todayTradeCount">-</div><div class="stat-label">Trades</div></div>
+            <div class="today-pnl-stat"><div class="stat-value positive" id="todayWins">-</div><div class="stat-label">Wins</div></div>
+            <div class="today-pnl-stat"><div class="stat-value negative" id="todayLosses">-</div><div class="stat-label">Losses</div></div>
+            <div class="today-pnl-stat"><div class="stat-value" id="todayWinRate">-</div><div class="stat-label">Win Rate</div></div>
+            <div class="today-pnl-stat"><div class="stat-value positive" id="todayTotalProfit">-</div><div class="stat-label">Profit</div></div>
+            <div class="today-pnl-stat"><div class="stat-value negative" id="todayTotalLoss">-</div><div class="stat-label">Loss</div></div>
+        </div>
+
         <!-- Account Balance -->
         <div class="grid" id="accountGrid">
             <div class="card" style="border-color:#38bdf8">
@@ -139,15 +173,45 @@
 
         <!-- Tabs Navigation -->
         <div class="tabs">
-            <div class="tab active" data-tab="history" onclick="switchTab('history')">Trade History</div>
+            <div class="tab active" data-tab="today" onclick="switchTab('today')">Today's Trades</div>
+            <div class="tab" data-tab="history" onclick="switchTab('history')">Trade History</div>
             <div class="tab" data-tab="signals" onclick="switchTab('signals')">Signals</div>
             <div class="tab" data-tab="errors" onclick="switchTab('errors')">Errors</div>
         </div>
 
+        <!-- Tab: Today's Trades -->
+        <div id="tab-today" class="tab-content active">
+            <div class="section" style="border-color:#34d399">
+                <h2>Today's Closed Trades (from Capital.com)</h2>
+                <div class="filter-bar">
+                    <span style="color:#94a3b8;font-size:0.85rem;font-weight:600;">Filter:</span>
+                    <button class="filter-btn active" onclick="filterTodayTrades('all')">All Trades</button>
+                    <button class="filter-btn filter-profit" onclick="filterTodayTrades('profit')">Profits Only</button>
+                    <button class="filter-btn filter-loss" onclick="filterTodayTrades('loss')">Losses Only</button>
+                </div>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr><th>Time</th><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>Exit</th><th>Invested</th><th>P&amp;L</th><th>Result</th></tr>
+                        </thead>
+                        <tbody id="todayTrades">
+                            <tr><td colspan="9" style="text-align:center;color:#64748b">Loading today's trades...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- Tab: Trade History -->
-        <div id="tab-history" class="tab-content active">
+        <div id="tab-history" class="tab-content">
             <div class="section" style="border-color:#fbbf24">
-                <h2>Trade History</h2>
+                <h2>Trade History (Last 7 Days from Capital.com)</h2>
+                <div class="filter-bar">
+                    <span style="color:#94a3b8;font-size:0.85rem;font-weight:600;">Filter:</span>
+                    <button class="filter-btn active" onclick="filterHistoryTrades('all')">All Trades</button>
+                    <button class="filter-btn filter-profit" onclick="filterHistoryTrades('profit')">Profits Only</button>
+                    <button class="filter-btn filter-loss" onclick="filterHistoryTrades('loss')">Losses Only</button>
+                </div>
                 <div class="history-summary" id="historySummary">
                     <div class="history-stat">Total Closed: <strong id="histTotalClosed">0</strong></div>
                     <div class="history-stat">Wins: <strong id="histWins" class="positive">0</strong></div>
@@ -199,19 +263,18 @@
     </div>
 
     <script>
-        const API_BASE = window.location.origin;
+        var API_BASE = window.location.origin;
+        var _todayTradesData = [];
+        var _historyTradesData = [];
+        var _todayFilter = 'all';
+        var _historyFilter = 'all';
 
-        async function fetchJSON(url) {
-            try {
-                const res = await fetch(API_BASE + url);
-                return await res.json();
-            } catch(e) {
-                console.error('Fetch error:', e);
-                return null;
-            }
+        function fetchJSON(url) {
+            return fetch(API_BASE + url).then(function(r) { return r.json(); }).catch(function(e) { console.error(e); return null; });
         }
 
         function pnlClass(val) { return val > 0 ? 'positive' : val < 0 ? 'negative' : 'neutral'; }
+        function rowClass(pnl) { return pnl > 0 ? 'row-profit' : pnl < 0 ? 'row-loss' : 'row-breakeven'; }
         function formatPrice(val) { return val != null ? val.toFixed(5) : '-'; }
         function formatTime(iso) { return iso ? new Date(iso).toLocaleString() : '-'; }
 
@@ -226,7 +289,7 @@
         function resultClass(r) {
             if (!r) return 'result-unknown';
             r = r.toUpperCase();
-            if (r === 'WIN') return 'result-win';
+            if (r === 'WIN' || r === 'PROFIT') return 'result-win';
             if (r === 'LOSS') return 'result-loss';
             if (r === 'BREAKEVEN') return 'result-breakeven';
             return 'result-unknown';
@@ -239,182 +302,243 @@
             document.getElementById('tab-' + name).classList.add('active');
         }
 
-        async function loadStatus() {
-            const data = await fetchJSON('/dashboard/api/status');
-            if (!data) return;
-            const el = document.getElementById('botStatus');
-            el.textContent = data.is_running ? 'Running' : 'Stopped';
-            el.className = 'value ' + (data.is_running ? 'positive' : 'negative');
-            const modeEl = document.getElementById('botMode');
-            const syms = data.symbols || [data.symbol];
-            modeEl.textContent = data.mode.toUpperCase() + ' | ' + syms.join(', ') + ' | ' + data.timeframe;
-            modeEl.className = 'mode-badge mode-' + data.mode;
-            const killBtn = document.getElementById('killBtn');
-            if (data.kill_switch) {
-                killBtn.textContent = 'Resume Bot';
-                killBtn.className = 'btn btn-success';
-            } else {
-                killBtn.textContent = 'Kill Switch';
-                killBtn.className = 'btn btn-danger';
-            }
+        function filterTodayTrades(f) {
+            _todayFilter = f;
+            var btns = document.querySelectorAll('#tab-today .filter-btn');
+            btns.forEach(function(x) { x.classList.remove('active'); });
+            if (f === 'all') btns[0].classList.add('active');
+            else if (f === 'profit') btns[1].classList.add('active');
+            else if (f === 'loss') btns[2].classList.add('active');
+            renderTodayTrades();
         }
 
-        async function loadStats() {
-            const data = await fetchJSON('/dashboard/api/stats');
-            if (!data) return;
-            const tpnl = document.getElementById('totalPnl');
-            tpnl.textContent = data.total_pnl.toFixed(2);
-            tpnl.className = 'value ' + pnlClass(data.total_pnl);
-            const dpnl = document.getElementById('todayPnl');
-            dpnl.textContent = data.today_pnl.toFixed(2);
-            dpnl.className = 'value ' + pnlClass(data.today_pnl);
-            document.getElementById('winRate').textContent = data.win_rate.toFixed(1) + '%';
-            document.getElementById('totalTrades').textContent = data.total_trades;
-            document.getElementById('openTrades').textContent = data.open_trades;
+        function filterHistoryTrades(f) {
+            _historyFilter = f;
+            var btns = document.querySelectorAll('#tab-history .filter-btn');
+            btns.forEach(function(x) { x.classList.remove('active'); });
+            if (f === 'all') btns[0].classList.add('active');
+            else if (f === 'profit') btns[1].classList.add('active');
+            else if (f === 'loss') btns[2].classList.add('active');
+            renderHistoryTrades();
         }
 
-        async function loadLivePositions() {
-            const data = await fetchJSON('/dashboard/api/live-positions');
-            if (!data) return;
-            // Update account info from live data
-            if (data.account && data.account.balance) {
-                const cur = data.account.currency || '';
-                document.getElementById('accountBalance').textContent = data.account.balance.toFixed(2) + ' ' + cur;
-                document.getElementById('accountBalance').className = 'value positive';
-                document.getElementById('accountEquity').textContent = (data.account.equity || 0).toFixed(2) + ' ' + cur;
-                document.getElementById('accountAvailable').textContent = (data.account.available || 0).toFixed(2) + ' ' + cur;
-                const pnlEl = document.getElementById('accountPnl');
-                pnlEl.textContent = (data.account.pnl || 0).toFixed(2) + ' ' + cur;
-                pnlEl.className = 'value ' + pnlClass(data.account.pnl || 0);
-            }
-            // Total unrealized P/L
-            const totalPnlEl = document.getElementById('totalUnrealizedPnl');
-            const tpnl = data.total_unrealized_pnl || 0;
-            const cur = (data.account && data.account.currency) || '';
-            totalPnlEl.textContent = 'Total Unrealized P&L: ' + tpnl.toFixed(2) + ' ' + cur;
-            totalPnlEl.className = 'pnl-total ' + pnlClass(tpnl);
-            // Live positions table
-            const tbody = document.getElementById('livePositions');
-            if (!data.positions || data.positions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No open positions</td></tr>';
-                return;
-            }
-            tbody.innerHTML = data.positions.map(p => `<tr>
-                <td><strong>${p.symbol}</strong></td>
-                <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
-                <td>${p.size}</td>
-                <td>${formatPrice(p.entry_price)}</td>
-                <td>${formatPrice(p.current_price)}</td>
-                <td><strong>${(p.invested || 0).toFixed(2)} ${p.currency || ''}</strong></td>
-                <td class="${pnlClass(p.unrealized_pnl)}"><strong>${p.unrealized_pnl.toFixed(2)} ${p.currency || ''}</strong></td>
-                <td>${p.risk_pct.toFixed(1)}%</td>
-                <td>${formatPrice(p.stop_loss)}</td>
-                <td>${formatPrice(p.take_profit)}</td>
-                <td class="${suggestionClass(p.suggestion)}">${p.suggestion}</td>
-            </tr>`).join('');
-        }
-
-        async function loadTradeHistory() {
-            const data = await fetchJSON('/dashboard/api/trade-history?limit=100');
-            if (!data) return;
-            const tbody = document.getElementById('tradeHistory');
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No closed trades yet</td></tr>';
-                document.getElementById('histTotalClosed').textContent = '0';
-                return;
-            }
-            var wins = 0, losses = 0, totalPnl = 0, totalDurSec = 0, durCount = 0;
-            data.forEach(function(t) {
-                if (t.result === 'WIN') wins++;
-                else if (t.result === 'LOSS') losses++;
-                totalPnl += t.pnl || 0;
-                if (t.opened_at && t.closed_at) {
-                    var d = (new Date(t.closed_at) - new Date(t.opened_at)) / 1000;
-                    if (d > 0) { totalDurSec += d; durCount++; }
-                }
-            });
-            var total = data.length;
-            var winRate = total > 0 ? (wins / total * 100) : 0;
-            var avgDur = durCount > 0 ? totalDurSec / durCount : 0;
-            var avgDurStr = '-';
-            if (avgDur > 3600) avgDurStr = Math.floor(avgDur/3600) + 'h ' + Math.floor((avgDur%3600)/60) + 'm';
-            else if (avgDur > 60) avgDurStr = Math.floor(avgDur/60) + 'm ' + Math.floor(avgDur%60) + 's';
-            else if (avgDur > 0) avgDurStr = Math.floor(avgDur) + 's';
-            document.getElementById('histTotalClosed').textContent = total;
-            document.getElementById('histWins').textContent = wins;
-            document.getElementById('histLosses').textContent = losses;
-            document.getElementById('histWinRate').textContent = winRate.toFixed(1) + '%';
-            var pnlEl = document.getElementById('histTotalPnl');
-            pnlEl.textContent = totalPnl.toFixed(2);
-            pnlEl.className = pnlClass(totalPnl);
-            document.getElementById('histAvgDuration').textContent = avgDurStr;
-            tbody.innerHTML = data.map(function(t) {
-                return '<tr>' +
-                '<td>' + formatTime(t.opened_at) + '</td>' +
-                '<td>' + formatTime(t.closed_at) + '</td>' +
-                '<td>' + (t.duration || '-') + '</td>' +
-                '<td><strong>' + t.symbol + '</strong></td>' +
-                '<td class="signal-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
-                '<td>' + t.size + '</td>' +
-                '<td>' + (t.invested || 0).toFixed(2) + '</td>' +
-                '<td>' + formatPrice(t.entry_price) + '</td>' +
-                '<td>' + formatPrice(t.exit_price) + '</td>' +
-                '<td class="' + pnlClass(t.pnl) + '"><strong>' + (t.pnl || 0).toFixed(2) + '</strong></td>' +
-                '<td class="' + resultClass(t.result) + '">' + t.result + '</td>' +
-                '</tr>';
+        function renderTodayTrades() {
+            var data = _todayTradesData;
+            if (_todayFilter === 'profit') data = data.filter(function(t) { return t.pnl > 0; });
+            else if (_todayFilter === 'loss') data = data.filter(function(t) { return t.pnl < 0; });
+            var tb = document.getElementById('todayTrades');
+            if (data.length === 0) { tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#64748b">No trades match filter</td></tr>'; return; }
+            tb.innerHTML = data.map(function(t) {
+                var rc = rowClass(t.pnl);
+                return '<tr class="' + rc + '">' +
+                    '<td>' + formatTime(t.closed_at) + '</td>' +
+                    '<td><strong>' + t.symbol + '</strong></td>' +
+                    '<td class="signal-' + (t.direction || '').toLowerCase() + '">' + (t.direction || '-') + '</td>' +
+                    '<td>' + t.size + '</td>' +
+                    '<td>' + formatPrice(t.entry_price) + '</td>' +
+                    '<td>' + formatPrice(t.exit_price) + '</td>' +
+                    '<td>' + (t.invested || 0).toFixed(2) + '</td>' +
+                    '<td class="' + pnlClass(t.pnl) + '"><strong>' + (t.pnl || 0).toFixed(2) + '</strong></td>' +
+                    '<td class="' + resultClass(t.result) + '">' + t.result + '</td></tr>';
             }).join('');
         }
 
-        async function loadSignals() {
-            const data = await fetchJSON('/dashboard/api/signals?limit=20');
-            if (!data) return;
-            const tbody = document.getElementById('recentSignals');
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b">No signals yet</td></tr>';
-                return;
-            }
-            tbody.innerHTML = data.map(s => `<tr>
-                <td>${formatTime(s.timestamp)}</td>
-                <td>${s.symbol}</td>
-                <td class="signal-${s.direction.toLowerCase()}">${s.direction}</td>
-                <td>${s.rsi != null ? s.rsi.toFixed(2) : '-'}</td>
-                <td>${s.ema_fast != null ? s.ema_fast.toFixed(5) : '-'}</td>
-                <td>${s.ema_slow != null ? s.ema_slow.toFixed(5) : '-'}</td>
-                <td>${s.acted_on ? 'Y' : '-'}</td>
-            </tr>`).join('');
+        function renderHistoryTrades() {
+            var data = _historyTradesData;
+            if (_historyFilter === 'profit') data = data.filter(function(t) { return t.pnl > 0; });
+            else if (_historyFilter === 'loss') data = data.filter(function(t) { return t.pnl < 0; });
+            var tb = document.getElementById('tradeHistory');
+            if (data.length === 0) { tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No trades match filter</td></tr>'; return; }
+            tb.innerHTML = data.map(function(t) {
+                var rc = rowClass(t.pnl);
+                return '<tr class="' + rc + '">' +
+                    '<td>' + formatTime(t.opened_at) + '</td>' +
+                    '<td>' + formatTime(t.closed_at) + '</td>' +
+                    '<td>' + (t.duration || '-') + '</td>' +
+                    '<td><strong>' + t.symbol + '</strong></td>' +
+                    '<td class="signal-' + (t.direction || '').toLowerCase() + '">' + (t.direction || '-') + '</td>' +
+                    '<td>' + t.size + '</td>' +
+                    '<td>' + (t.invested || 0).toFixed(2) + '</td>' +
+                    '<td>' + formatPrice(t.entry_price) + '</td>' +
+                    '<td>' + formatPrice(t.exit_price) + '</td>' +
+                    '<td class="' + pnlClass(t.pnl) + '"><strong>' + (t.pnl || 0).toFixed(2) + '</strong></td>' +
+                    '<td class="' + resultClass(t.result) + '">' + t.result + '</td></tr>';
+            }).join('');
         }
 
-        async function loadErrors() {
-            const data = await fetchJSON('/dashboard/api/errors?limit=10');
-            if (!data) return;
-            const tbody = document.getElementById('recentErrors');
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b">No errors</td></tr>';
-                return;
-            }
-            tbody.innerHTML = data.map(e => `<tr>
-                <td>${formatTime(e.timestamp)}</td>
-                <td>${e.module}</td>
-                <td>${e.error_type}</td>
-                <td>${e.message.substring(0, 100)}</td>
-            </tr>`).join('');
+        function loadTodayPnl() {
+            fetchJSON('/dashboard/api/today-pnl').then(function(d) {
+                if (!d) return;
+                _todayTradesData = d.trades || [];
+                var s = d.summary || {};
+                var net = s.net_pnl || 0;
+                var bn = document.getElementById('todayPnlBanner');
+                bn.className = 'today-pnl-banner ' + (net > 0 ? 'today-profit' : net < 0 ? 'today-loss' : 'today-neutral');
+                var ne = document.getElementById('todayNetPnl');
+                ne.textContent = (net >= 0 ? '+' : '') + net.toFixed(2);
+                ne.className = 'today-pnl-value ' + pnlClass(net);
+                document.getElementById('todayTradeCount').textContent = s.total_trades || 0;
+                document.getElementById('todayWins').textContent = s.wins || 0;
+                document.getElementById('todayLosses').textContent = s.losses || 0;
+                document.getElementById('todayWinRate').textContent = (s.win_rate || 0).toFixed(1) + '%';
+                document.getElementById('todayTotalProfit').textContent = '+' + (s.total_profit || 0).toFixed(2);
+                document.getElementById('todayTotalLoss').textContent = (s.total_loss || 0).toFixed(2);
+                renderTodayTrades();
+            });
         }
 
-        async function toggleKillSwitch() {
-            const status = await fetchJSON('/dashboard/api/status');
-            const enable = status ? !status.kill_switch : true;
-            await fetch(API_BASE + '/dashboard/api/kill-switch?enable=' + enable, { method: 'POST' });
-            await loadStatus();
+        function loadStatus() {
+            fetchJSON('/dashboard/api/status').then(function(d) {
+                if (!d) return;
+                var el = document.getElementById('botStatus');
+                el.textContent = d.is_running ? 'Running' : 'Stopped';
+                el.className = 'value ' + (d.is_running ? 'positive' : 'negative');
+                var modeEl = document.getElementById('botMode');
+                var syms = d.symbols || [d.symbol];
+                modeEl.textContent = d.mode.toUpperCase() + ' | ' + syms.join(', ') + ' | ' + d.timeframe;
+                modeEl.className = 'mode-badge mode-' + d.mode;
+                var killBtn = document.getElementById('killBtn');
+                if (d.kill_switch) { killBtn.textContent = 'Resume Bot'; killBtn.className = 'btn btn-success'; }
+                else { killBtn.textContent = 'Kill Switch'; killBtn.className = 'btn btn-danger'; }
+            });
         }
 
-        async function refreshAll() {
-            await Promise.all([loadLivePositions(), loadStatus(), loadStats(), loadTradeHistory(), loadSignals(), loadErrors()]);
+        function loadStats() {
+            fetchJSON('/dashboard/api/stats').then(function(d) {
+                if (!d) return;
+                var t = document.getElementById('totalPnl');
+                t.textContent = d.total_pnl.toFixed(2);
+                t.className = 'value ' + pnlClass(d.total_pnl);
+                var dp = document.getElementById('todayPnl');
+                dp.textContent = d.today_pnl.toFixed(2);
+                dp.className = 'value ' + pnlClass(d.today_pnl);
+                document.getElementById('winRate').textContent = d.win_rate.toFixed(1) + '%';
+                document.getElementById('totalTrades').textContent = d.total_trades;
+                document.getElementById('openTrades').textContent = d.open_trades;
+            });
+        }
+
+        function loadLivePositions() {
+            fetchJSON('/dashboard/api/live-positions').then(function(data) {
+                if (!data) return;
+                if (data.account && data.account.balance) {
+                    var cur = data.account.currency || '';
+                    document.getElementById('accountBalance').textContent = data.account.balance.toFixed(2) + ' ' + cur;
+                    document.getElementById('accountBalance').className = 'value positive';
+                    document.getElementById('accountEquity').textContent = (data.account.equity || 0).toFixed(2) + ' ' + cur;
+                    document.getElementById('accountAvailable').textContent = (data.account.available || 0).toFixed(2) + ' ' + cur;
+                    var pe = document.getElementById('accountPnl');
+                    pe.textContent = (data.account.pnl || 0).toFixed(2) + ' ' + cur;
+                    pe.className = 'value ' + pnlClass(data.account.pnl || 0);
+                }
+                var totalPnlEl = document.getElementById('totalUnrealizedPnl');
+                var tpnl = data.total_unrealized_pnl || 0;
+                var cur2 = (data.account && data.account.currency) || '';
+                totalPnlEl.textContent = 'Total Unrealized P&L: ' + tpnl.toFixed(2) + ' ' + cur2;
+                totalPnlEl.className = 'pnl-total ' + pnlClass(tpnl);
+                var tbody = document.getElementById('livePositions');
+                if (!data.positions || data.positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No open positions</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.positions.map(function(p) {
+                    var rc = p.unrealized_pnl > 0 ? 'row-profit' : p.unrealized_pnl < 0 ? 'row-loss' : '';
+                    return '<tr class="' + rc + '">' +
+                        '<td><strong>' + p.symbol + '</strong></td>' +
+                        '<td class="signal-' + p.direction.toLowerCase() + '">' + p.direction + '</td>' +
+                        '<td>' + p.size + '</td>' +
+                        '<td>' + formatPrice(p.entry_price) + '</td>' +
+                        '<td>' + formatPrice(p.current_price) + '</td>' +
+                        '<td><strong>' + (p.invested || 0).toFixed(2) + ' ' + (p.currency || '') + '</strong></td>' +
+                        '<td class="' + pnlClass(p.unrealized_pnl) + '"><strong>' + p.unrealized_pnl.toFixed(2) + ' ' + (p.currency || '') + '</strong></td>' +
+                        '<td>' + p.risk_pct.toFixed(1) + '%</td>' +
+                        '<td>' + formatPrice(p.stop_loss) + '</td>' +
+                        '<td>' + formatPrice(p.take_profit) + '</td>' +
+                        '<td class="' + suggestionClass(p.suggestion) + '">' + p.suggestion + '</td></tr>';
+                }).join('');
+            });
+        }
+
+        function loadTradeHistory() {
+            fetchJSON('/dashboard/api/trade-history?limit=100').then(function(data) {
+                if (!data) return;
+                _historyTradesData = data;
+                if (data.length === 0) {
+                    document.getElementById('tradeHistory').innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No closed trades yet</td></tr>';
+                    document.getElementById('histTotalClosed').textContent = '0';
+                    return;
+                }
+                var wins = 0, losses = 0, totalPnl = 0, totalDurSec = 0, durCount = 0;
+                data.forEach(function(t) {
+                    if (t.result === 'WIN' || t.result === 'PROFIT') wins++;
+                    else if (t.result === 'LOSS') losses++;
+                    totalPnl += t.pnl || 0;
+                    if (t.opened_at && t.closed_at) {
+                        var d = (new Date(t.closed_at) - new Date(t.opened_at)) / 1000;
+                        if (d > 0) { totalDurSec += d; durCount++; }
+                    }
+                });
+                var total = data.length;
+                var winRate = total > 0 ? (wins / total * 100) : 0;
+                var avgDur = durCount > 0 ? totalDurSec / durCount : 0;
+                var avgDurStr = '-';
+                if (avgDur > 3600) avgDurStr = Math.floor(avgDur/3600) + 'h ' + Math.floor((avgDur%3600)/60) + 'm';
+                else if (avgDur > 60) avgDurStr = Math.floor(avgDur/60) + 'm ' + Math.floor(avgDur%60) + 's';
+                else if (avgDur > 0) avgDurStr = Math.floor(avgDur) + 's';
+                document.getElementById('histTotalClosed').textContent = total;
+                document.getElementById('histWins').textContent = wins;
+                document.getElementById('histLosses').textContent = losses;
+                document.getElementById('histWinRate').textContent = winRate.toFixed(1) + '%';
+                var pnlEl = document.getElementById('histTotalPnl');
+                pnlEl.textContent = totalPnl.toFixed(2);
+                pnlEl.className = pnlClass(totalPnl);
+                document.getElementById('histAvgDuration').textContent = avgDurStr;
+                renderHistoryTrades();
+            });
+        }
+
+        function loadSignals() {
+            fetchJSON('/dashboard/api/signals?limit=20').then(function(data) {
+                if (!data) return;
+                var tbody = document.getElementById('recentSignals');
+                if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b">No signals yet</td></tr>'; return; }
+                tbody.innerHTML = data.map(function(s) {
+                    return '<tr><td>' + formatTime(s.timestamp) + '</td><td>' + s.symbol + '</td>' +
+                        '<td class="signal-' + s.direction.toLowerCase() + '">' + s.direction + '</td>' +
+                        '<td>' + (s.rsi != null ? s.rsi.toFixed(2) : '-') + '</td>' +
+                        '<td>' + (s.ema_fast != null ? s.ema_fast.toFixed(5) : '-') + '</td>' +
+                        '<td>' + (s.ema_slow != null ? s.ema_slow.toFixed(5) : '-') + '</td>' +
+                        '<td>' + (s.acted_on ? 'Y' : '-') + '</td></tr>';
+                }).join('');
+            });
+        }
+
+        function loadErrors() {
+            fetchJSON('/dashboard/api/errors?limit=10').then(function(data) {
+                if (!data) return;
+                var tbody = document.getElementById('recentErrors');
+                if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b">No errors</td></tr>'; return; }
+                tbody.innerHTML = data.map(function(e) {
+                    return '<tr><td>' + formatTime(e.timestamp) + '</td><td>' + e.module + '</td>' +
+                        '<td>' + e.error_type + '</td><td>' + e.message.substring(0, 100) + '</td></tr>';
+                }).join('');
+            });
+        }
+
+        function toggleKillSwitch() {
+            fetchJSON('/dashboard/api/status').then(function(s) {
+                var en = s ? !s.kill_switch : true;
+                fetch(API_BASE + '/dashboard/api/kill-switch?enable=' + en, { method: 'POST' }).then(function() { loadStatus(); });
+            });
+        }
+
+        function refreshAll() {
+            loadLivePositions(); loadStatus(); loadStats(); loadTodayPnl(); loadTradeHistory(); loadSignals(); loadErrors();
         }
 
         refreshAll();
-        // Fast refresh for live positions (5s), slower for other data (30s)
         setInterval(loadLivePositions, 5000);
-        setInterval(function() { loadStatus(); loadStats(); loadTradeHistory(); loadSignals(); loadErrors(); }, 30000);
+        setInterval(function() { loadStatus(); loadStats(); loadTodayPnl(); loadTradeHistory(); loadSignals(); loadErrors(); }, 30000);
     </script>
 </body>
 </html>

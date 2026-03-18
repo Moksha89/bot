@@ -357,7 +357,7 @@ class TradingScheduler:
             await self.order_manager.process_signal(session, signal, account_balance)
             return result
 
-        # ML scoring
+        # ML scoring — require score > 0.6 for high-analysis trades
         if self.ml_scorer.enabled:
             ml_score = self.ml_scorer.score_signal(
                 ema_fast=signal.ema_fast, ema_slow=signal.ema_slow,
@@ -366,10 +366,11 @@ class TradingScheduler:
                 close_price=signal.close_price,
             )
             result["ml_score"] = ml_score
-            if ml_score.get("recommendation") == "strong_avoid":
+            score_val = ml_score.get("score", 0)
+            if score_val < 0.6:
                 signal.direction = "NO_TRADE"
-                signal.reasons.append(f"ML scorer: strong_avoid (score={ml_score['score']:.3f})")
-                logger.info("ML scorer rejected signal for %s", symbol)
+                signal.reasons.append(f"ML scorer: low confidence (score={score_val:.3f} < 0.6)")
+                logger.info("ML scorer rejected signal for %s (score=%.3f < 0.6)", symbol, score_val)
                 await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 
@@ -445,8 +446,8 @@ class TradingScheduler:
                 signal.direction, symbol, combined_rec, combined_confidence,
             )
 
-            # Only block trade if AI is very highly confident in rejection (>90%)
-            if combined_rec == "REJECT" and combined_confidence > 90.0:
+            # High-analysis requirement: only allow CONFIRM trades
+            if combined_rec == "REJECT":
                 original_direction = signal.direction
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"AI REJECTED (conf={combined_confidence:.0f}%): {ai_analysis['analysis']}")
@@ -455,17 +456,21 @@ class TradingScheduler:
                 )
                 await self.order_manager.process_signal(session, signal, account_balance)
                 return result
-            elif combined_rec == "REJECT":
-                logger.info(
-                    "AI soft-reject for %s %s (conf=%.1f%% <= 90%%), proceeding with trade",
-                    signal.direction, symbol, combined_confidence,
-                )
-            # HOLD is treated as advisory — don't block the trade
             elif combined_rec == "HOLD":
+                original_direction = signal.direction
+                signal.direction = "NO_TRADE"
+                signal.reasons.append(f"AI HOLD (conf={combined_confidence:.0f}%): not confident enough")
                 logger.info(
-                    "AI HOLD for %s %s (conf=%.1f%%), proceeding with trade",
-                    signal.direction, symbol, combined_confidence,
+                    "AI HOLD blocked %s %s (conf=%.1f%%) — high-analysis mode requires CONFIRM",
+                    original_direction, symbol, combined_confidence,
                 )
+                await self.order_manager.process_signal(session, signal, account_balance)
+                return result
+            # CONFIRM — proceed with trade
+            logger.info(
+                "AI CONFIRMED %s %s (conf=%.1f%%) — high-analysis trade approved",
+                signal.direction, symbol, combined_confidence,
+            )
 
         # Portfolio risk check
         if signal.stop_loss is not None:

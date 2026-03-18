@@ -233,6 +233,46 @@ class CapitalClient:
             return {}
         return await self._request("PUT", f"{POSITIONS_ENDPOINT}/{deal_id}", json_data=payload)
 
+    # --- Transaction History ---
+
+    async def get_transaction_history(
+        self,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        transaction_type: str = "ALL",
+        max_results: int = 500,
+    ) -> list[dict]:
+        """
+        Get account transaction history (closed trades, deposits, withdrawals).
+        from_date/to_date format: 2024-01-01T00:00:00
+        transaction_type: ALL, TRADE, DEPOSIT, WITHDRAWAL
+        """
+        params: dict = {"type": transaction_type, "maxSpanInSeconds": 86400}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        data = await self._request("GET", "/api/v1/history/transactions", params=params)
+        return data.get("transactions", [])
+
+    async def get_activity_history(
+        self,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        max_results: int = 500,
+    ) -> list[dict]:
+        """
+        Get account activity history (trades, order fills, etc.).
+        from_date/to_date format: 2024-01-01T00:00:00
+        """
+        params: dict = {}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        data = await self._request("GET", "/api/v1/history/activity", params=params)
+        return data.get("activities", [])
+
     # --- Orders ---
 
     async def place_order(
