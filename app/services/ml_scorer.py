@@ -33,7 +33,7 @@ class MLSignalScorer:
         self.min_samples = min_samples
         self._model: Optional[object] = None
         self._feature_names = [
-            "ema_spread", "rsi", "atr_norm", "spread",
+            "atr_norm", "spread",
             "hour", "day_of_week", "direction_buy",
         ]
         self._is_trained = False
@@ -196,21 +196,19 @@ class MLSignalScorer:
                 continue
 
             opened = pos.opened_at or datetime.now(timezone.utc)
-            # Approximate indicators from position data
+            # Build features from position data (only features we can reliably derive)
+            atr_norm = 0.0
+            if pos.stop_loss and pos.entry_price:
+                sl_distance = abs(pos.entry_price - pos.stop_loss)
+                atr_norm = sl_distance / pos.entry_price
+
             features = [
-                0.0,  # ema_spread (not available, default)
-                50.0,  # rsi (not available, default)
-                0.0,  # atr_norm
-                0.0,  # spread
+                atr_norm,
+                0.0,  # spread (not stored, default)
                 float(opened.hour),
                 float(opened.weekday()),
                 1.0 if pos.direction == "BUY" else 0.0,
             ]
-
-            # Use stop_loss distance as ATR proxy
-            if pos.stop_loss and pos.entry_price:
-                sl_distance = abs(pos.entry_price - pos.stop_loss)
-                features[2] = sl_distance / pos.entry_price  # atr_norm
 
             features_list.append(features)
             targets.append(1 if pos.result == TradeResult.WIN else 0)
@@ -228,13 +226,16 @@ class MLSignalScorer:
         close_price: float,
         timestamp: datetime,
     ) -> list[float]:
-        """Extract feature vector from signal data."""
-        ema_spread = (ema_fast - ema_slow) / ema_slow if ema_slow != 0 else 0
+        """Extract feature vector from signal data.
+
+        Only uses features that are also available during training
+        (derived from Position data). ema_fast/ema_slow/rsi are accepted
+        for API compatibility but not used as features because they are
+        not stored in the Position model.
+        """
         atr_norm = atr / close_price if close_price != 0 else 0
 
         return [
-            ema_spread,
-            rsi,
             atr_norm,
             spread,
             float(timestamp.hour),

@@ -420,6 +420,9 @@ class PositionManager:
                 pos.is_open = False
                 pos.closed_at = datetime.now(timezone.utc)
                 pos.result = TradeResult.EXTERNAL_CLOSE
+                # Update daily P&L so risk limits account for external closes
+                if pos.pnl is not None:
+                    await self._update_daily_pnl(session, pos.pnl)
 
             await session.commit()
         except CapitalAPIError as e:

@@ -5,6 +5,7 @@ Supports multi-symbol trading, session/news filters, trailing stops,
 ML scoring, sentiment analysis, and auto-optimization.
 """
 
+import asyncio
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -52,6 +53,7 @@ class TradingScheduler:
     """
 
     def __init__(self) -> None:
+        self._cycle_lock = asyncio.Lock()
         self.client = CapitalClient()
         self.market_data = MarketDataService(self.client)
         self.signal_generator = SignalGenerator()
@@ -134,7 +136,16 @@ class TradingScheduler:
         """
         Run one trading cycle for all configured symbols.
         Returns a summary dict of what happened.
+        Uses a lock to prevent concurrent cycles (manual trigger vs scheduled).
         """
+        if self._cycle_lock.locked():
+            return {"status": "busy", "message": "Another cycle is already running"}
+
+        async with self._cycle_lock:
+            return await self._run_cycle_inner()
+
+    async def _run_cycle_inner(self) -> dict:
+        """Inner cycle logic, always called under lock."""
         if not self._is_running:
             return {"status": "stopped", "message": "Scheduler is not running"}
 
@@ -443,24 +454,14 @@ class TradingScheduler:
                 await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 
-        # AI market analysis (text + chart vision)
+        # AI market analysis (single call to reduce latency — 27 symbols × 3s = 81s)
         ai_analysis = None
         if (
             signal.direction != "NO_TRADE"
             and settings.ai_analysis_enabled
             and self.ai_analyst.enabled
         ):
-            # Run advanced chart analysis
-            chart_analysis = await self.ai_analyst.analyze_with_chart(
-                symbol=symbol, timeframe=timeframe, df=df,
-                signal_direction=signal.direction,
-                indicators={
-                    "ema_fast": signal.ema_fast, "ema_slow": signal.ema_slow,
-                    "rsi": signal.rsi, "atr": signal.atr,
-                },
-            )
-
-            # Run standard market analysis
+            # Run standard market analysis only (skip chart vision to halve latency)
             standard_analysis = await self.ai_analyst.analyze_market(
                 symbol=symbol, timeframe=timeframe, df=df,
                 signal_direction=signal.direction,
@@ -471,17 +472,8 @@ class TradingScheduler:
                 spread=spread, account_balance=account_balance,
             )
 
-            # Combine analyses — use the more conservative recommendation
-            if standard_analysis["recommendation"] == "REJECT" or chart_analysis["recommendation"] == "REJECT":
-                combined_rec = "REJECT"
-            elif standard_analysis["recommendation"] == "HOLD" or chart_analysis["recommendation"] == "HOLD":
-                combined_rec = "HOLD"
-            else:
-                combined_rec = "CONFIRM"
-
-            combined_confidence = min(
-                standard_analysis["confidence"], chart_analysis["confidence"]
-            )
+            combined_rec = standard_analysis["recommendation"]
+            combined_confidence = standard_analysis["confidence"]
             ai_analysis = {
                 "recommendation": combined_rec,
                 "confidence": combined_confidence,

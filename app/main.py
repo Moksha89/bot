@@ -2,6 +2,7 @@
 Main FastAPI application entry point for the Capital.com Trading Bot.
 """
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -185,6 +186,10 @@ async def get_config() -> dict:
 
 @app.post("/api/run-cycle")
 async def trigger_cycle() -> dict:
-    """Manually trigger a trading cycle."""
+    """Manually trigger a trading cycle.
+
+    Concurrency-safe: TradingScheduler.run_cycle() uses an internal lock
+    so a manual trigger cannot race with a scheduled cycle.
+    """
     result = await trading_scheduler.run_cycle()
     return result

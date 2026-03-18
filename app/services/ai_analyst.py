@@ -188,7 +188,10 @@ Rules:
 - CONFIRM: The signal looks good, proceed with the trade
 - REJECT: Market conditions don't support this trade, skip it
 - HOLD: Wait for better conditions or more confirmation
-- Be conservative - when in doubt, recommend HOLD or REJECT
+- Be balanced - only REJECT if there is a clear technical reason (e.g., strong divergence, price at major resistance for a BUY, overextended move)
+- CONFIRM if the signal aligns with the trend and indicators support it
+- HOLD only if conditions are genuinely ambiguous
+- Do NOT reject simply because conditions aren't perfect — no trade setup is ever perfect
 - Consider the spread relative to expected move
 - Factor in trend alignment with the signal direction"""
 
@@ -210,7 +213,8 @@ Rules:
                         "You analyze market data and provide precise, "
                         "actionable trading recommendations. "
                         "Always respond in the exact JSON format requested. "
-                        "Be conservative and prioritize capital preservation."
+                        "Be balanced — CONFIRM trades that have reasonable technical support. "
+                        "Only REJECT when there is a clear, specific technical reason to avoid the trade."
                     ),
                 },
                 {"role": "user", "content": prompt},
