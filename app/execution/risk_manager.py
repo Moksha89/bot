@@ -106,7 +106,12 @@ class RiskManager:
         """
         result = await session.execute(
             select(Position)
-            .where(Position.is_open.is_(False))
+            .where(
+                Position.is_open.is_(False),
+                Position.result.in_([
+                    TradeResult.WIN, TradeResult.LOSS, TradeResult.BREAKEVEN
+                ]),
+            )
             .order_by(Position.closed_at.desc())
             .limit(self.max_consecutive_losses)
         )

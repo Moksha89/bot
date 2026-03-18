@@ -211,6 +211,7 @@ class PositionManager:
                     )
                     pos.is_open = False
                     pos.closed_at = datetime.now(timezone.utc)
+                    pos.result = TradeResult.EXTERNAL_CLOSE
 
             await session.commit()
         except CapitalAPIError as e:

@@ -310,18 +310,18 @@ async def run_backtest(
     import numpy as np
     import pandas as pd
 
-    np.random.seed(42)
+    rng = np.random.default_rng(42)
     n = 500
     prices = [2000.0]
     for _ in range(n - 1):
-        prices.append(prices[-1] * (1 + np.random.normal(0, 0.005)))
+        prices.append(prices[-1] * (1 + rng.normal(0, 0.005)))
 
     df = pd.DataFrame({
         "open": prices,
-        "high": [p * (1 + abs(np.random.normal(0, 0.002))) for p in prices],
-        "low": [p * (1 - abs(np.random.normal(0, 0.002))) for p in prices],
-        "close": [p * (1 + np.random.normal(0, 0.001)) for p in prices],
-        "volume": [np.random.randint(100, 1000) for _ in prices],
+        "high": [p * (1 + abs(rng.normal(0, 0.002))) for p in prices],
+        "low": [p * (1 - abs(rng.normal(0, 0.002))) for p in prices],
+        "close": [p * (1 + rng.normal(0, 0.001)) for p in prices],
+        "volume": [rng.integers(100, 1000) for _ in prices],
     })
 
     engine = BacktestEngine(initial_balance=initial_balance)

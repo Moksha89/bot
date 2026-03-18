@@ -264,13 +264,13 @@ Look for:
 5. Divergences between price and RSI
 
 RESPOND IN EXACTLY THIS JSON FORMAT:
-{{{{
+{{
     "recommendation": "CONFIRM" or "REJECT" or "HOLD",
     "confidence": <number 0-100>,
     "analysis": "<analysis of chart patterns and structure>",
     "risk_notes": "<pattern-based risk warnings>",
     "patterns_detected": ["<list of chart patterns found>"]
-}}}}"""
+}}"""
 
         try:
             response = await self._call_openrouter(prompt, model=self.vision_model)

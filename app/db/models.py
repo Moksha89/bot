@@ -40,6 +40,7 @@ class TradeResult(str, enum.Enum):
     LOSS = "LOSS"
     BREAKEVEN = "BREAKEVEN"
     OPEN = "OPEN"
+    EXTERNAL_CLOSE = "EXTERNAL_CLOSE"
 
 
 class Signal(Base):
