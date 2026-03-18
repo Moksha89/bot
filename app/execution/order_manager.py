@@ -413,6 +413,10 @@ class OrderManager:
                         order.status = OrderStatus.REJECTED
                         reason = confirmation.get("reason", "Unknown")
                         order.error_message = f"Rejected: {reason}"
+                        logger.warning(
+                            "Order REJECTED for %s %s size=%.2f: %s",
+                            signal.direction, signal.symbol, adj_size, reason,
+                        )
                 except CapitalAPIError as e:
                     order.status = OrderStatus.FAILED
                     order.error_message = f"Confirmation failed: {e}"
