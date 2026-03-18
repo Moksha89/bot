@@ -128,20 +128,22 @@ async def get_account_info() -> dict:
         return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": ""}
     try:
         client = CapitalClient()
-        await client.authenticate()
-        balance = await client.get_account_balance()
-        # Also get currency from accounts endpoint
-        accounts_data = await client.get_accounts()
-        accounts = accounts_data.get("accounts", [])
-        currency = accounts[0].get("currency", "") if accounts else ""
-        await client.close()
-        return {
-            "balance": balance.get("balance", 0),
-            "equity": balance.get("equity", 0),
-            "available": balance.get("available", 0),
-            "pnl": balance.get("pnl", 0),
-            "currency": currency,
-        }
+        try:
+            await client.authenticate()
+            balance = await client.get_account_balance()
+            # Also get currency from accounts endpoint
+            accounts_data = await client.get_accounts()
+            accounts = accounts_data.get("accounts", [])
+            currency = accounts[0].get("currency", "") if accounts else ""
+            return {
+                "balance": balance.get("balance", 0),
+                "equity": balance.get("equity", 0),
+                "available": balance.get("available", 0),
+                "pnl": balance.get("pnl", 0),
+                "currency": currency,
+            }
+        finally:
+            await client.close()
     except (CapitalAPIError, Exception) as e:
         logger.error("Failed to fetch account info: %s", e)
         return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": "", "error": str(e)}
@@ -308,6 +310,88 @@ async def toggle_kill_switch(enable: bool = True) -> dict:
     status = "ACTIVATED" if enable else "DEACTIVATED"
     logger.warning("Kill switch %s", status)
     return {"kill_switch": enable, "status": status}
+
+
+@router.get("/api/live-positions")
+async def get_live_positions() -> dict:
+    """Get live positions with real-time P/L from Capital.com API."""
+    if settings.trading.mode not in ("demo", "live", "analysis"):
+        return {"positions": [], "account": {}}
+    try:
+        client = CapitalClient()
+        try:
+            await client.authenticate()
+            api_positions = await client.get_positions()
+            balance_data = await client.get_account_balance()
+            accounts_data = await client.get_accounts()
+            currency = ""
+            accounts = accounts_data.get("accounts", [])
+            if accounts:
+                currency = accounts[0].get("currency", "")
+        finally:
+            await client.close()
+
+        positions = []
+        total_pnl = 0.0
+        for p in api_positions:
+            pos_data = p.get("position", {})
+            market_data = p.get("market", {})
+            epic = market_data.get("epic", "")
+            direction = pos_data.get("direction", "")
+            size = float(pos_data.get("size", 0))
+            entry = float(pos_data.get("level", 0))
+            current_bid = float(market_data.get("bid", 0))
+            current_ask = float(market_data.get("offer", 0))
+            current_price = current_bid if direction == "BUY" else current_ask
+
+            if direction == "BUY":
+                unrealized_pnl = (current_price - entry) * size
+            else:
+                unrealized_pnl = (entry - current_price) * size
+
+            total_pnl += unrealized_pnl
+
+            # Risk suggestion
+            account_bal = balance_data.get("balance", 1000)
+            risk_pct = abs(unrealized_pnl) / account_bal * 100 if account_bal > 0 else 0
+            suggestion = "HOLD"
+            if unrealized_pnl < 0 and risk_pct > 3.0:
+                suggestion = "CLOSE - Loss exceeds 3% of account"
+            elif unrealized_pnl < 0 and risk_pct > 1.5:
+                suggestion = "WARNING - Approaching risk limit"
+            elif unrealized_pnl > 0 and risk_pct > 2.0:
+                suggestion = "CONSIDER TP - Good profit, consider taking"
+
+            positions.append({
+                "deal_id": pos_data.get("dealId", ""),
+                "symbol": epic,
+                "direction": direction,
+                "size": size,
+                "entry_price": entry,
+                "current_price": round(current_price, 5),
+                "stop_loss": float(pos_data.get("stopLevel", 0)) or None,
+                "take_profit": float(pos_data.get("limitLevel", 0)) or None,
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "risk_pct": round(risk_pct, 2),
+                "suggestion": suggestion,
+                "currency": currency,
+                "created_date": pos_data.get("createdDateUTC", ""),
+            })
+
+        return {
+            "positions": positions,
+            "total_unrealized_pnl": round(total_pnl, 2),
+            "account": {
+                "balance": balance_data.get("balance", 0),
+                "equity": balance_data.get("equity", 0),
+                "available": balance_data.get("available", 0),
+                "pnl": balance_data.get("pnl", 0),
+                "currency": currency,
+            },
+        }
+    except (CapitalAPIError, Exception) as e:
+        logger.error("Failed to fetch live positions: %s", e)
+        return {"positions": [], "account": {}, "error": str(e)}
 
 
 @router.get("/api/performance")

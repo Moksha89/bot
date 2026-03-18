@@ -176,6 +176,21 @@ class TradingScheduler:
                     if opt_df is not None and len(opt_df) >= 60:
                         opt_result = await self.auto_optimizer.optimize(session, opt_df)
                         if opt_result:
+                            # Apply optimized parameters to signal generator
+                            self.signal_generator.ema_fast = opt_result.ema_fast
+                            self.signal_generator.ema_slow = opt_result.ema_slow
+                            self.signal_generator.rsi_buy_min = opt_result.rsi_buy_min
+                            self.signal_generator.rsi_buy_max = opt_result.rsi_buy_max
+                            self.signal_generator.rsi_sell_min = opt_result.rsi_sell_min
+                            self.signal_generator.rsi_sell_max = opt_result.rsi_sell_max
+                            self.signal_generator.sl_atr_mult = opt_result.sl_atr_multiplier
+                            self.signal_generator.tp_rr = opt_result.tp_risk_reward
+                            logger.info(
+                                "Applied optimized params: EMA=%d/%d RSI_buy=[%.0f,%.0f] RSI_sell=[%.0f,%.0f]",
+                                opt_result.ema_fast, opt_result.ema_slow,
+                                opt_result.rsi_buy_min, opt_result.rsi_buy_max,
+                                opt_result.rsi_sell_min, opt_result.rsi_sell_max,
+                            )
                             summary["optimization"] = {
                                 "ema_fast": opt_result.ema_fast,
                                 "ema_slow": opt_result.ema_slow,
@@ -236,6 +251,23 @@ class TradingScheduler:
                             )
                     except Exception as e:
                         logger.warning("SL/TP check failed: %s", e)
+
+                # Auto-manage positions (risk analysis + auto-close losers)
+                if self._authenticated:
+                    try:
+                        prices = await self.market_data.get_current_prices(symbols)
+                        risk_actions = await self.position_manager.auto_manage_positions(
+                            session, prices, self._latest_atr, account_balance,
+                        )
+                        summary["position_risk"] = risk_actions
+                        for action in risk_actions:
+                            if action.get("action_taken") == "CLOSED":
+                                await self.notifier.notify_risk_limit(
+                                    f"Auto-closed {action['direction']} {action['symbol']}: "
+                                    f"P&L={action['unrealized_pnl']:.2f} ({action['reasons'][0]})"
+                                )
+                    except Exception as e:
+                        logger.warning("Position risk management failed: %s", e)
 
                 # Sync positions from API
                 if self._authenticated:
@@ -335,6 +367,7 @@ class TradingScheduler:
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"ML scorer: strong_avoid (score={ml_score['score']:.3f})")
                 logger.info("ML scorer rejected signal for %s", symbol)
+                await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 
         # Sentiment check
@@ -353,6 +386,7 @@ class TradingScheduler:
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"Sentiment: {sent_msg}")
                 logger.info("Sentiment blocked %s for %s", original_direction, symbol)
+                await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 
         # AI market analysis (text + chart vision)
@@ -416,6 +450,7 @@ class TradingScheduler:
                 await self.notifier.notify_risk_limit(
                     f"AI rejected {original_direction} on {symbol}: {ai_analysis['analysis']}"
                 )
+                await self.order_manager.process_signal(session, signal, account_balance)
                 return result
             elif combined_rec == "REJECT":
                 logger.info(
@@ -444,6 +479,7 @@ class TradingScheduler:
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"Portfolio: {portfolio_check.message}")
                 logger.info("Portfolio risk blocked trade for %s: %s", symbol, portfolio_check.message)
+                await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 
         # Execute trade

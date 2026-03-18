@@ -245,6 +245,13 @@ class OrderManager:
                     order.status = OrderStatus.FAILED
                     order.error_message = f"Confirmation failed: {e}"
                     await self._record_error(session, "order_manager", e)
+            else:
+                order.status = OrderStatus.FAILED
+                order.error_message = "No deal reference returned by API"
+                logger.error(
+                    "Order placed but no deal reference returned for %s %s",
+                    signal.direction, signal.symbol,
+                )
 
             await session.commit()
 

@@ -26,6 +26,7 @@ class StrategyType(str, Enum):
     EMA_CROSSOVER = "ema_crossover"
     BREAKOUT = "breakout"
     MEAN_REVERSION = "mean_reversion"
+    SWING = "swing"
 
 
 @dataclass
@@ -263,6 +264,119 @@ class MeanReversionStrategy:
         )
 
 
+class SwingTradingStrategy:
+    """
+    Swing trading strategy: captures multi-day moves using higher-timeframe
+    trend alignment with lower-timeframe entries. Uses EMA 50/200 for trend,
+    RSI for momentum, and support/resistance for entries.
+    """
+
+    name = StrategyType.SWING
+
+    def evaluate(
+        self,
+        df: pd.DataFrame,
+        snapshot: MarketSnapshot,
+        ema_medium: int = 50,
+        ema_long: int = 200,
+        rsi_oversold: float = 35,
+        rsi_overbought: float = 65,
+        sl_atr_mult: float = 2.0,
+        tp_rr: float = 3.0,
+        max_spread: float = 5.0,
+    ) -> StrategyResult:
+        """Evaluate swing trading strategy."""
+        if len(df) < ema_long + 5:
+            return StrategyResult(
+                strategy=self.name, direction="NO_TRADE", confidence=0.0,
+                reasons=["Insufficient data for swing strategy"],
+            )
+
+        closes = df["close"].astype(float)
+        highs = df["high"].astype(float)
+        lows = df["low"].astype(float)
+
+        # Calculate EMAs for swing
+        ema_50 = calculate_ema(closes, ema_medium)
+        ema_200 = calculate_ema(closes, ema_long)
+
+        current_ema50 = float(ema_50.iloc[-1])
+        current_ema200 = float(ema_200.iloc[-1])
+        prev_ema50 = float(ema_50.iloc[-2])
+        prev_ema200 = float(ema_200.iloc[-2])
+
+        # Detect swing levels (recent 20-bar highs/lows)
+        lookback = min(20, len(df) - 1)
+        recent_high = float(highs.iloc[-lookback:].max())
+        recent_low = float(lows.iloc[-lookback:].min())
+
+        reasons: list[str] = []
+
+        # Bullish swing: EMA50 > EMA200 (uptrend), price pulls back to EMA50 zone,
+        # RSI showing momentum recovery
+        bullish_trend = current_ema50 > current_ema200
+        price_near_ema50 = snapshot.close <= current_ema50 * 1.005  # Within 0.5% of EMA50
+        price_above_ema200 = snapshot.close > current_ema200
+        rsi_recovery = snapshot.rsi > rsi_oversold and snapshot.rsi < 55
+        ema50_rising = current_ema50 > prev_ema50
+
+        if (
+            bullish_trend
+            and price_near_ema50
+            and price_above_ema200
+            and rsi_recovery
+            and ema50_rising
+            and snapshot.spread <= max_spread
+            and not snapshot.has_open_long
+        ):
+            sl = snapshot.close - (snapshot.atr * sl_atr_mult)
+            risk = snapshot.close - sl
+            tp = snapshot.close + (risk * tp_rr)
+            # Confidence based on trend strength and pullback quality
+            trend_strength = (current_ema50 - current_ema200) / current_ema200
+            confidence = min(0.5 + trend_strength * 50 + (snapshot.rsi - rsi_oversold) / 100, 1.0)
+            reasons.append(f"Swing BUY: uptrend pullback to EMA50 ({current_ema50:.2f})")
+            reasons.append(f"EMA50={current_ema50:.2f} > EMA200={current_ema200:.2f}")
+            return StrategyResult(
+                strategy=self.name, direction="BUY", confidence=confidence,
+                stop_loss=round(sl, 5), take_profit=round(tp, 5), reasons=reasons,
+            )
+
+        # Bearish swing: EMA50 < EMA200 (downtrend), price rallies to EMA50 zone,
+        # RSI showing momentum fading
+        bearish_trend = current_ema50 < current_ema200
+        price_near_ema50_sell = snapshot.close >= current_ema50 * 0.995
+        price_below_ema200 = snapshot.close < current_ema200
+        rsi_fading = snapshot.rsi < rsi_overbought and snapshot.rsi > 45
+        ema50_falling = current_ema50 < prev_ema50
+
+        if (
+            bearish_trend
+            and price_near_ema50_sell
+            and price_below_ema200
+            and rsi_fading
+            and ema50_falling
+            and snapshot.spread <= max_spread
+            and not snapshot.has_open_short
+        ):
+            sl = snapshot.close + (snapshot.atr * sl_atr_mult)
+            risk = sl - snapshot.close
+            tp = snapshot.close - (risk * tp_rr)
+            trend_strength = (current_ema200 - current_ema50) / current_ema200
+            confidence = min(0.5 + trend_strength * 50 + (rsi_overbought - snapshot.rsi) / 100, 1.0)
+            reasons.append(f"Swing SELL: downtrend rally to EMA50 ({current_ema50:.2f})")
+            reasons.append(f"EMA50={current_ema50:.2f} < EMA200={current_ema200:.2f}")
+            return StrategyResult(
+                strategy=self.name, direction="SELL", confidence=confidence,
+                stop_loss=round(sl, 5), take_profit=round(tp, 5), reasons=reasons,
+            )
+
+        return StrategyResult(
+            strategy=self.name, direction="NO_TRADE", confidence=0.0,
+            reasons=["No swing trade setup detected"],
+        )
+
+
 class StrategySelector:
     """
     Selects the best strategy based on market conditions.
@@ -274,6 +388,7 @@ class StrategySelector:
         self.ema_crossover = EmaCrossoverStrategy()
         self.breakout = BreakoutStrategy()
         self.mean_reversion = MeanReversionStrategy()
+        self.swing = SwingTradingStrategy()
 
     def detect_market_regime(self, df: pd.DataFrame, lookback: int = 30) -> str:
         """
@@ -334,14 +449,18 @@ class StrategySelector:
                 k: v for k, v in kwargs.items()
                 if k in ("max_spread", "sl_atr_mult", "tp_rr")
             }),
+            self.swing.evaluate(df, snapshot, **{
+                k: v for k, v in kwargs.items()
+                if k in ("max_spread", "sl_atr_mult", "tp_rr")
+            }),
         ]
 
         # Apply regime weighting
         regime_weights = {
-            "trending": {StrategyType.EMA_CROSSOVER: 1.3, StrategyType.BREAKOUT: 1.1, StrategyType.MEAN_REVERSION: 0.5},
-            "ranging": {StrategyType.EMA_CROSSOVER: 0.7, StrategyType.BREAKOUT: 0.8, StrategyType.MEAN_REVERSION: 1.3},
-            "volatile": {StrategyType.EMA_CROSSOVER: 0.8, StrategyType.BREAKOUT: 1.2, StrategyType.MEAN_REVERSION: 0.9},
-            "unknown": {StrategyType.EMA_CROSSOVER: 1.0, StrategyType.BREAKOUT: 1.0, StrategyType.MEAN_REVERSION: 1.0},
+            "trending": {StrategyType.EMA_CROSSOVER: 1.3, StrategyType.BREAKOUT: 1.1, StrategyType.MEAN_REVERSION: 0.5, StrategyType.SWING: 1.2},
+            "ranging": {StrategyType.EMA_CROSSOVER: 0.7, StrategyType.BREAKOUT: 0.8, StrategyType.MEAN_REVERSION: 1.3, StrategyType.SWING: 0.6},
+            "volatile": {StrategyType.EMA_CROSSOVER: 0.8, StrategyType.BREAKOUT: 1.2, StrategyType.MEAN_REVERSION: 0.9, StrategyType.SWING: 0.7},
+            "unknown": {StrategyType.EMA_CROSSOVER: 1.0, StrategyType.BREAKOUT: 1.0, StrategyType.MEAN_REVERSION: 1.0, StrategyType.SWING: 1.0},
         }
         weights = regime_weights.get(regime, regime_weights["unknown"])
 

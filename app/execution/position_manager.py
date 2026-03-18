@@ -187,6 +187,115 @@ class PositionManager:
             )
             session.add(daily)
 
+    async def analyze_position_risk(
+        self,
+        position: Position,
+        current_price: float,
+        atr: float,
+        account_balance: float,
+    ) -> dict:
+        """
+        Analyze risk for a position (including manually opened ones).
+        Returns risk analysis with suggestion to hold/close.
+        """
+        if position.direction == "BUY":
+            unrealized_pnl = (current_price - position.entry_price) * position.size
+            distance_from_entry = current_price - position.entry_price
+        else:
+            unrealized_pnl = (position.entry_price - current_price) * position.size
+            distance_from_entry = position.entry_price - current_price
+
+        # Risk as percentage of account
+        risk_pct = abs(unrealized_pnl) / account_balance * 100 if account_balance > 0 else 0
+
+        # How many ATRs the price has moved against us
+        atr_distance = abs(distance_from_entry) / atr if atr > 0 else 0
+
+        suggestion = "HOLD"
+        reasons = []
+
+        # Auto-close if loss exceeds 3% of account
+        if unrealized_pnl < 0 and risk_pct > 3.0:
+            suggestion = "CLOSE_LOSS"
+            reasons.append(f"Loss exceeds 3% of account ({risk_pct:.1f}%)")
+
+        # Auto-close if price moved more than 3 ATRs against us
+        elif unrealized_pnl < 0 and atr_distance > 3.0:
+            suggestion = "CLOSE_LOSS"
+            reasons.append(f"Price moved {atr_distance:.1f} ATRs against position")
+
+        # Suggest taking profit if up more than 2 ATRs
+        elif unrealized_pnl > 0 and atr_distance > 2.0:
+            suggestion = "CONSIDER_TP"
+            reasons.append(f"Price moved {atr_distance:.1f} ATRs in favor, consider taking profit")
+
+        # Warning if approaching danger zone
+        elif unrealized_pnl < 0 and risk_pct > 1.5:
+            suggestion = "WARNING"
+            reasons.append(f"Loss at {risk_pct:.1f}% of account, approaching risk limit")
+
+        if not reasons:
+            reasons.append("Position within acceptable risk parameters")
+
+        return {
+            "deal_id": position.deal_id,
+            "symbol": position.symbol,
+            "direction": position.direction,
+            "entry_price": position.entry_price,
+            "current_price": current_price,
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "risk_pct": round(risk_pct, 2),
+            "atr_distance": round(atr_distance, 2),
+            "suggestion": suggestion,
+            "reasons": reasons,
+        }
+
+    async def auto_manage_positions(
+        self,
+        session: AsyncSession,
+        current_prices: dict[str, dict[str, float]],
+        atr_values: dict[str, float],
+        account_balance: float,
+    ) -> list[dict]:
+        """
+        Monitor all open positions (including manually opened ones).
+        Auto-close positions that breach risk limits.
+        Returns list of actions taken.
+        """
+        if settings.trading.mode not in ("demo", "live"):
+            return []
+
+        positions = await self.get_open_positions(session)
+        actions = []
+
+        for pos in positions:
+            prices = current_prices.get(pos.symbol)
+            if not prices:
+                continue
+
+            current_price = prices["bid"] if pos.direction == "BUY" else prices["ask"]
+            atr = atr_values.get(pos.symbol, 0)
+
+            analysis = await self.analyze_position_risk(
+                pos, current_price, atr, account_balance
+            )
+
+            if analysis["suggestion"] == "CLOSE_LOSS":
+                logger.warning(
+                    "Auto-closing losing position %s %s: %s",
+                    pos.direction, pos.symbol, analysis["reasons"],
+                )
+                result = await self.close_position(
+                    session, pos, current_price, "auto_risk_close"
+                )
+                analysis["action_taken"] = "CLOSED"
+                analysis["close_result"] = result
+                actions.append(analysis)
+            else:
+                actions.append(analysis)
+
+        return actions
+
     async def sync_positions_from_api(self, session: AsyncSession) -> None:
         """
         Sync positions from Capital.com API with local database.

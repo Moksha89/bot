@@ -9,11 +9,15 @@
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
         .header { background: #1e293b; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
         .header h1 { font-size: 1.5rem; color: #38bdf8; }
-        .status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 600; }
-        .status-running { background: #065f46; color: #34d399; }
-        .status-stopped { background: #7f1d1d; color: #f87171; }
+        .suggestion-hold { color: #94a3b8; }
+        .suggestion-warning { color: #fbbf24; font-weight: 600; }
+        .suggestion-close { color: #f87171; font-weight: 600; }
+        .suggestion-tp { color: #34d399; font-weight: 600; }
+        .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34d399; margin-right: 6px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .pnl-total { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; padding: 0.5rem; background: #0f172a; border-radius: 0.5rem; text-align: center; }
         .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
         .card { background: #1e293b; border-radius: 0.75rem; padding: 1.25rem; border: 1px solid #334155; }
         .card h3 { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
         .card .value { font-size: 1.75rem; font-weight: 700; }
@@ -49,7 +53,7 @@
     <div class="header">
         <h1>Trading Bot Dashboard</h1>
         <div class="controls">
-            <span class="refresh-info">Auto-refresh: 30s</span>
+            <span class="refresh-info"><span class="live-dot"></span>Live (5s positions)</span>
             <button class="btn btn-primary" onclick="refreshAll()">Refresh</button>
             <button id="killBtn" class="btn btn-danger" onclick="toggleKillSwitch()">Kill Switch</button>
         </div>
@@ -63,11 +67,15 @@
                 <div class="value positive" id="accountBalance">Loading...</div>
             </div>
             <div class="card">
+                <h3>Equity</h3>
+                <div class="value neutral" id="accountEquity">--</div>
+            </div>
+            <div class="card">
                 <h3>Available Funds</h3>
                 <div class="value neutral" id="accountAvailable">--</div>
             </div>
             <div class="card">
-                <h3>Unrealized P&L</h3>
+                <h3>Unrealized P&amp;L</h3>
                 <div class="value neutral" id="accountPnl">--</div>
             </div>
         </div>
@@ -81,11 +89,11 @@
             </div>
             <div class="card">
                 <h3>Total P&L</h3>
-                <div class="value neutral" id="totalPnl">$0.00</div>
+                <div class="value neutral" id="totalPnl">0.00</div>
             </div>
             <div class="card">
                 <h3>Today's P&L</h3>
-                <div class="value neutral" id="todayPnl">$0.00</div>
+                <div class="value neutral" id="todayPnl">0.00</div>
             </div>
             <div class="card">
                 <h3>Win Rate</h3>
@@ -101,15 +109,16 @@
             </div>
         </div>
 
-        <!-- Open Positions -->
-        <div class="section">
-            <h2>Open Positions</h2>
+        <!-- Live Positions (Real-time from Capital.com) -->
+        <div class="section" style="border-color:#38bdf8">
+            <h2><span class="live-dot"></span>Live Positions &amp; Risk Analysis (Real-time)</h2>
+            <div class="pnl-total" id="totalUnrealizedPnl">Total Unrealized P&amp;L: Loading...</div>
             <table>
                 <thead>
-                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>SL</th><th>TP</th><th>Opened</th></tr>
+                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>Current</th><th>P&amp;L</th><th>Risk %</th><th>SL</th><th>TP</th><th>Suggestion</th></tr>
                 </thead>
-                <tbody id="openPositions">
-                    <tr><td colspan="7" style="text-align:center;color:#64748b">No open positions</td></tr>
+                <tbody id="livePositions">
+                    <tr><td colspan="10" style="text-align:center;color:#64748b">Loading live positions...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -171,6 +180,14 @@
         function formatPrice(val) { return val != null ? val.toFixed(5) : '-'; }
         function formatTime(iso) { return iso ? new Date(iso).toLocaleString() : '-'; }
 
+        function suggestionClass(s) {
+            if (!s) return 'suggestion-hold';
+            if (s.startsWith('CLOSE')) return 'suggestion-close';
+            if (s.startsWith('WARNING')) return 'suggestion-warning';
+            if (s.startsWith('CONSIDER')) return 'suggestion-tp';
+            return 'suggestion-hold';
+        }
+
         async function loadStatus() {
             const data = await fetchJSON('/dashboard/api/status');
             if (!data) return;
@@ -178,7 +195,8 @@
             el.textContent = data.is_running ? 'Running' : 'Stopped';
             el.className = 'value ' + (data.is_running ? 'positive' : 'negative');
             const modeEl = document.getElementById('botMode');
-            modeEl.textContent = data.mode.toUpperCase() + ' | ' + data.symbol + ' | ' + data.timeframe;
+            const syms = data.symbols || [data.symbol];
+            modeEl.textContent = data.mode.toUpperCase() + ' | ' + syms.join(', ') + ' | ' + data.timeframe;
             modeEl.className = 'mode-badge mode-' + data.mode;
             const killBtn = document.getElementById('killBtn');
             if (data.kill_switch) {
@@ -194,52 +212,74 @@
             const data = await fetchJSON('/dashboard/api/stats');
             if (!data) return;
             const tpnl = document.getElementById('totalPnl');
-            tpnl.textContent = '$' + data.total_pnl.toFixed(2);
+            tpnl.textContent = data.total_pnl.toFixed(2);
             tpnl.className = 'value ' + pnlClass(data.total_pnl);
             const dpnl = document.getElementById('todayPnl');
-            dpnl.textContent = '$' + data.today_pnl.toFixed(2);
+            dpnl.textContent = data.today_pnl.toFixed(2);
             dpnl.className = 'value ' + pnlClass(data.today_pnl);
             document.getElementById('winRate').textContent = data.win_rate.toFixed(1) + '%';
             document.getElementById('totalTrades').textContent = data.total_trades;
             document.getElementById('openTrades').textContent = data.open_trades;
         }
 
-        async function loadPositions() {
-            const open = await fetchJSON('/dashboard/api/positions?open_only=true');
-            const all = await fetchJSON('/dashboard/api/positions');
-            if (open) {
-                const tbody = document.getElementById('openPositions');
-                if (open.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b">No open positions</td></tr>';
-                } else {
-                    tbody.innerHTML = open.map(p => `<tr>
-                        <td>${p.symbol}</td>
-                        <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
-                        <td>${p.size}</td>
-                        <td>${formatPrice(p.entry_price)}</td>
-                        <td>${formatPrice(p.stop_loss)}</td>
-                        <td>${formatPrice(p.take_profit)}</td>
-                        <td>${formatTime(p.opened_at)}</td>
-                    </tr>`).join('');
-                }
+        async function loadLivePositions() {
+            const data = await fetchJSON('/dashboard/api/live-positions');
+            if (!data) return;
+            // Update account info from live data
+            if (data.account && data.account.balance) {
+                const cur = data.account.currency || '';
+                document.getElementById('accountBalance').textContent = data.account.balance.toFixed(2) + ' ' + cur;
+                document.getElementById('accountBalance').className = 'value positive';
+                document.getElementById('accountEquity').textContent = (data.account.equity || 0).toFixed(2) + ' ' + cur;
+                document.getElementById('accountAvailable').textContent = (data.account.available || 0).toFixed(2) + ' ' + cur;
+                const pnlEl = document.getElementById('accountPnl');
+                pnlEl.textContent = (data.account.pnl || 0).toFixed(2) + ' ' + cur;
+                pnlEl.className = 'value ' + pnlClass(data.account.pnl || 0);
             }
-            if (all) {
-                const closed = all.filter(p => !p.is_open);
-                const tbody = document.getElementById('recentTrades');
-                if (closed.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b">No trades yet</td></tr>';
-                } else {
-                    tbody.innerHTML = closed.slice(0, 20).map(p => `<tr>
-                        <td>${p.symbol}</td>
-                        <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
-                        <td>${p.size}</td>
-                        <td>${formatPrice(p.entry_price)}</td>
-                        <td>${formatPrice(p.exit_price)}</td>
-                        <td class="${pnlClass(p.pnl)}">${p.pnl != null ? p.pnl.toFixed(2) : '-'}</td>
-                        <td>${p.result}</td>
-                        <td>${formatTime(p.closed_at)}</td>
-                    </tr>`).join('');
-                }
+            // Total unrealized P/L
+            const totalPnlEl = document.getElementById('totalUnrealizedPnl');
+            const tpnl = data.total_unrealized_pnl || 0;
+            const cur = (data.account && data.account.currency) || '';
+            totalPnlEl.textContent = 'Total Unrealized P&L: ' + tpnl.toFixed(2) + ' ' + cur;
+            totalPnlEl.className = 'pnl-total ' + pnlClass(tpnl);
+            // Live positions table
+            const tbody = document.getElementById('livePositions');
+            if (!data.positions || data.positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#64748b">No open positions</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.positions.map(p => `<tr>
+                <td><strong>${p.symbol}</strong></td>
+                <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
+                <td>${p.size}</td>
+                <td>${formatPrice(p.entry_price)}</td>
+                <td>${formatPrice(p.current_price)}</td>
+                <td class="${pnlClass(p.unrealized_pnl)}"><strong>${p.unrealized_pnl.toFixed(2)} ${p.currency || ''}</strong></td>
+                <td>${p.risk_pct.toFixed(1)}%</td>
+                <td>${formatPrice(p.stop_loss)}</td>
+                <td>${formatPrice(p.take_profit)}</td>
+                <td class="${suggestionClass(p.suggestion)}">${p.suggestion}</td>
+            </tr>`).join('');
+        }
+
+        async function loadRecentTrades() {
+            const all = await fetchJSON('/dashboard/api/positions');
+            if (!all) return;
+            const closed = all.filter(p => !p.is_open);
+            const tbody = document.getElementById('recentTrades');
+            if (closed.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b">No trades yet</td></tr>';
+            } else {
+                tbody.innerHTML = closed.slice(0, 20).map(p => `<tr>
+                    <td>${p.symbol}</td>
+                    <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
+                    <td>${p.size}</td>
+                    <td>${formatPrice(p.entry_price)}</td>
+                    <td>${formatPrice(p.exit_price)}</td>
+                    <td class="${pnlClass(p.pnl)}">${p.pnl != null ? p.pnl.toFixed(2) : '-'}</td>
+                    <td>${p.result}</td>
+                    <td>${formatTime(p.closed_at)}</td>
+                </tr>`).join('');
             }
         }
 
@@ -258,7 +298,7 @@
                 <td>${s.rsi != null ? s.rsi.toFixed(2) : '-'}</td>
                 <td>${s.ema_fast != null ? s.ema_fast.toFixed(5) : '-'}</td>
                 <td>${s.ema_slow != null ? s.ema_slow.toFixed(5) : '-'}</td>
-                <td>${s.acted_on ? '✓' : '–'}</td>
+                <td>${s.acted_on ? 'Y' : '-'}</td>
             </tr>`).join('');
         }
 
@@ -285,26 +325,14 @@
             await loadStatus();
         }
 
-        async function loadAccount() {
-            const data = await fetchJSON('/dashboard/api/account');
-            if (!data) return;
-            const cur = data.currency || '';
-            const balEl = document.getElementById('accountBalance');
-            balEl.textContent = data.balance.toFixed(2) + ' ' + cur;
-            balEl.className = 'value positive';
-            const avEl = document.getElementById('accountAvailable');
-            avEl.textContent = data.available.toFixed(2) + ' ' + cur;
-            const pnlEl = document.getElementById('accountPnl');
-            pnlEl.textContent = data.pnl.toFixed(2) + ' ' + cur;
-            pnlEl.className = 'value ' + pnlClass(data.pnl);
-        }
-
         async function refreshAll() {
-            await Promise.all([loadAccount(), loadStatus(), loadStats(), loadPositions(), loadSignals(), loadErrors()]);
+            await Promise.all([loadLivePositions(), loadStatus(), loadStats(), loadRecentTrades(), loadSignals(), loadErrors()]);
         }
 
         refreshAll();
-        setInterval(refreshAll, 30000);
+        // Fast refresh for live positions (5s), slower for other data (30s)
+        setInterval(loadLivePositions, 5000);
+        setInterval(function() { loadStatus(); loadStats(); loadRecentTrades(); loadSignals(); loadErrors(); }, 30000);
     </script>
 </body>
 </html>
