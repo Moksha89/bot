@@ -177,9 +177,11 @@ class BacktestEngine:
                         closed = True
                 elif open_trade["direction"] == "SELL":
                     if high >= open_trade["sl"]:
+                        # Stop loss hit
                         exit_price = open_trade["sl"]
                         closed = True
                     elif low <= open_trade["tp"]:
+                        # Take profit hit
                         exit_price = open_trade["tp"]
                         closed = True
 
