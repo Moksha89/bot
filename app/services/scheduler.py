@@ -83,7 +83,8 @@ class TradingScheduler:
                 mode=TrailingMode.ATR,
                 activation_r=settings.trailing_stop_activation_r,
                 atr_multiplier=settings.trailing_stop_atr_mult,
-            )
+            ),
+            client=self.client,
         )
         self.sentiment_analyzer = SentimentAnalyzer(enabled=settings.sentiment_enabled)
         self.ml_scorer = MLSignalScorer(enabled=settings.ml_scoring_enabled)

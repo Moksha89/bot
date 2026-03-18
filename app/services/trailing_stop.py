@@ -12,6 +12,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db.models import Position
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,9 @@ class TrailingStopManager:
     Called each trading cycle to adjust SL levels.
     """
 
-    def __init__(self, config: TrailingStopConfig | None = None) -> None:
+    def __init__(self, config: TrailingStopConfig | None = None, client: "CapitalClient | None" = None) -> None:
         self.config = config or TrailingStopConfig()
+        self.client = client
         # Track highest/lowest price seen for each position
         self._peak_prices: dict[int, float] = {}
 
@@ -84,19 +86,34 @@ class TrailingStopManager:
 
             if adjustment:
                 old_sl = pos.stop_loss
-                pos.stop_loss = adjustment["new_sl"]
+                new_sl = adjustment["new_sl"]
+                pos.stop_loss = new_sl
+
+                # Sync to Capital.com API in demo/live mode
+                api_synced = False
+                if self.client and pos.deal_id and settings.trading.mode in ("demo", "live"):
+                    try:
+                        await self.client.update_position(pos.deal_id, stop_loss=new_sl)
+                        api_synced = True
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to sync trailing SL to API for %s %s: %s",
+                            pos.symbol, pos.deal_id, e,
+                        )
+
                 adjusted.append({
                     "position_id": pos.id,
                     "symbol": pos.symbol,
                     "direction": pos.direction,
                     "old_sl": old_sl,
-                    "new_sl": adjustment["new_sl"],
+                    "new_sl": new_sl,
                     "current_price": current_price,
                     "reason": adjustment["reason"],
+                    "api_synced": api_synced,
                 })
                 logger.info(
-                    "Trailing SL adjusted for %s %s: %.5f -> %.5f (price=%.5f)",
-                    pos.direction, pos.symbol, old_sl or 0, adjustment["new_sl"], current_price,
+                    "Trailing SL adjusted for %s %s: %.5f -> %.5f (price=%.5f, api_synced=%s)",
+                    pos.direction, pos.symbol, old_sl or 0, new_sl, current_price, api_synced,
                 )
 
         if adjusted:

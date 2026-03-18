@@ -92,10 +92,14 @@ class CapitalClient:
                     response.status_code,
                     response.text,
                 )
+                try:
+                    auth_error_data = response.json() if response.text else {}
+                except Exception:
+                    auth_error_data = {}
                 raise CapitalAPIError(
                     f"Auth failed: {response.status_code}",
                     status_code=response.status_code,
-                    response_data=response.json() if response.text else {},
+                    response_data=auth_error_data,
                 )
         except httpx.RequestError as exc:
             logger.error("Authentication request error: %s", exc)
@@ -125,13 +129,19 @@ class CapitalClient:
                 return await self._request(method, endpoint, params, json_data, retry=False)
 
             if response.status_code >= 400:
-                error_data = response.json() if response.text else {}
+                try:
+                    error_data = response.json() if response.text else {}
+                except Exception:
+                    error_data = {}
                 raise CapitalAPIError(
                     f"API error {response.status_code}: {response.text}",
                     status_code=response.status_code,
                     response_data=error_data,
                 )
-            return response.json() if response.text else {}
+            try:
+                return response.json() if response.text else {}
+            except Exception:
+                return {}
         except httpx.RequestError as exc:
             logger.error("Request error on %s %s: %s", method, endpoint, exc)
             raise CapitalAPIError(f"Request error: {exc}") from exc
@@ -206,6 +216,22 @@ class CapitalClient:
     async def close_position(self, deal_id: str) -> dict:
         """Close a position by deal ID."""
         return await self._request("DELETE", f"{POSITIONS_ENDPOINT}/{deal_id}")
+
+    async def update_position(
+        self,
+        deal_id: str,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+    ) -> dict:
+        """Update stop loss and/or take profit for an existing position."""
+        payload: dict = {}
+        if stop_loss is not None:
+            payload["stopLevel"] = stop_loss
+        if take_profit is not None:
+            payload["profitLevel"] = take_profit
+        if not payload:
+            return {}
+        return await self._request("PUT", f"{POSITIONS_ENDPOINT}/{deal_id}", json_data=payload)
 
     # --- Orders ---
 
