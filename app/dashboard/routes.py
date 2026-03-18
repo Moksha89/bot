@@ -394,6 +394,9 @@ async def get_live_positions() -> dict:
             elif unrealized_pnl > 0 and risk_pct > 2.0:
                 suggestion = "CONSIDER TP - Good profit, consider taking"
 
+            # Invested amount = entry price * size
+            invested_amount = entry * size
+
             positions.append({
                 "deal_id": pos_data.get("dealId", ""),
                 "symbol": epic,
@@ -401,6 +404,7 @@ async def get_live_positions() -> dict:
                 "size": size,
                 "entry_price": entry,
                 "current_price": round(current_price, 5),
+                "invested": round(invested_amount, 2),
                 "stop_loss": float(pos_data.get("stopLevel", 0)) or None,
                 "take_profit": float(pos_data.get("limitLevel", 0)) or None,
                 "unrealized_pnl": round(unrealized_pnl, 2),

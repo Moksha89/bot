@@ -115,10 +115,10 @@
             <div class="pnl-total" id="totalUnrealizedPnl">Total Unrealized P&amp;L: Loading...</div>
             <table>
                 <thead>
-                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>Current</th><th>P&amp;L</th><th>Risk %</th><th>SL</th><th>TP</th><th>Suggestion</th></tr>
+                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>Current</th><th>Invested</th><th>P&amp;L</th><th>Risk %</th><th>SL</th><th>TP</th><th>Suggestion</th></tr>
                 </thead>
                 <tbody id="livePositions">
-                    <tr><td colspan="10" style="text-align:center;color:#64748b">Loading live positions...</td></tr>
+                    <tr><td colspan="11" style="text-align:center;color:#64748b">Loading live positions...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -245,7 +245,7 @@
             // Live positions table
             const tbody = document.getElementById('livePositions');
             if (!data.positions || data.positions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#64748b">No open positions</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No open positions</td></tr>';
                 return;
             }
             tbody.innerHTML = data.positions.map(p => `<tr>
@@ -254,6 +254,7 @@
                 <td>${p.size}</td>
                 <td>${formatPrice(p.entry_price)}</td>
                 <td>${formatPrice(p.current_price)}</td>
+                <td><strong>${(p.invested || 0).toFixed(2)} ${p.currency || ''}</strong></td>
                 <td class="${pnlClass(p.unrealized_pnl)}"><strong>${p.unrealized_pnl.toFixed(2)} ${p.currency || ''}</strong></td>
                 <td>${p.risk_pct.toFixed(1)}%</td>
                 <td>${formatPrice(p.stop_loss)}</td>

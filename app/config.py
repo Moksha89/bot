@@ -46,7 +46,7 @@ class CapitalConfig:
 class TradingConfig:
     symbol: str = field(default_factory=lambda: _env("TRADING_SYMBOL", "XAUUSD"))
     symbols: list[str] = field(default_factory=lambda: [
-        s.strip() for s in _env("TRADING_SYMBOLS", "XAUUSD").split(",") if s.strip()
+        s.strip() for s in _env("TRADING_SYMBOLS", "GOLD,EURUSD,US100,BTCUSD,ETHUSD").split(",") if s.strip()
     ])
     timeframe: str = field(default_factory=lambda: _env("TRADING_TIMEFRAME", "HOUR"))
     mode: str = field(default_factory=lambda: _env("TRADING_MODE", "demo"))
