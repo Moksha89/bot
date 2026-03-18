@@ -791,10 +791,12 @@ class TradingScheduler:
         self._daily_pnl = pnl
         self._daily_wins = wins
         self._daily_losses = losses
-        self._daily_trades = len(closed_today)
+        # NOTE: do NOT overwrite _daily_trades here — that counter
+        # tracks only trades placed by the bot in the current session/day
+        # and is incremented in _run_cycle_inner when a FILLED trade occurs.
         logger.info(
-            "Daily P&L update: %.2f (%d trades, %d wins, %d losses)",
-            pnl, len(closed_today), wins, losses,
+            "Daily P&L update: %.2f (closed=%d, wins=%d, losses=%d, bot_trades_today=%d)",
+            pnl, len(closed_today), wins, losses, self._daily_trades,
         )
 
     # ---- Multi-timeframe confirmation helpers ----
