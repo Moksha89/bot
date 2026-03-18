@@ -478,7 +478,6 @@ class TradingScheduler:
                 "recommendation": combined_rec,
                 "confidence": combined_confidence,
                 "analysis": standard_analysis["analysis"],
-                "chart_analysis": chart_analysis.get("analysis", ""),
                 "risk_notes": standard_analysis["risk_notes"],
             }
             result["ai_analysis"] = ai_analysis
