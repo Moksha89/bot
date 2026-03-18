@@ -30,7 +30,7 @@ from app.services.sentiment import SentimentAnalyzer
 from app.services.ml_scorer import MLSignalScorer
 from app.services.auto_optimizer import AutoOptimizer
 from app.services.portfolio import PortfolioManager
-from app.strategy.indicators import calculate_atr
+from app.strategy.indicators import calculate_atr, calculate_ema
 from app.strategy.signals import SignalGenerator
 from app.strategy.strategies import StrategySelector
 
@@ -85,6 +85,7 @@ class TradingScheduler:
                 mode=TrailingMode.ATR,
                 activation_r=settings.trailing_stop_activation_r,
                 atr_multiplier=settings.trailing_stop_atr_mult,
+                breakeven_r=settings.trailing_stop_breakeven_r,
             ),
             client=self.client,
         )
@@ -99,6 +100,8 @@ class TradingScheduler:
             max_correlated_exposure=settings.risk.max_correlated_exposure,
             max_positions=settings.risk.max_total_positions,
         )
+        # Cache for higher-timeframe trend per symbol
+        self._htf_trend: dict[str, str] = {}  # symbol -> "up" / "down" / "flat"
 
     async def initialize(self) -> bool:
         """Initialize the scheduler: authenticate and set up resources."""
@@ -218,6 +221,14 @@ class TradingScheduler:
                     except Exception as e:
                         logger.warning("ML training failed: %s", e)
 
+                # Update higher-timeframe trends for MTF confirmation
+                if settings.mtf_enabled:
+                    try:
+                        await self._update_htf_trends(symbols)
+                        summary["htf_trends"] = dict(self._htf_trend)
+                    except Exception as e:
+                        logger.warning("HTF trend update failed: %s", e)
+
                 # Process each symbol (only if session filter allows new trades)
                 if session_ok:
                     for symbol in symbols:
@@ -265,6 +276,22 @@ class TradingScheduler:
                             )
                     except Exception as e:
                         logger.warning("SL/TP check failed: %s", e)
+
+                # Time-based exit: close stale trades that haven't moved
+                if settings.stale_trade_exit_enabled:
+                    try:
+                        stale_closed = await self._close_stale_trades(
+                            session, account_balance,
+                        )
+                        if stale_closed:
+                            summary["stale_exits"] = stale_closed
+                            for sc in stale_closed:
+                                await self.notifier.notify_risk_limit(
+                                    f"Stale exit: {sc['direction']} {sc['symbol']} "
+                                    f"closed after {sc['minutes_held']:.0f}min (P&L={sc['pnl']:.2f})"
+                                )
+                    except Exception as e:
+                        logger.warning("Stale trade exit failed: %s", e)
 
                 # Auto-manage positions (risk analysis + auto-close losers)
                 if self._authenticated:
@@ -416,6 +443,44 @@ class TradingScheduler:
             await self.order_manager.process_signal(session, signal, account_balance)
             return result
 
+        # Multi-timeframe confirmation: require higher-TF trend to agree
+        if settings.mtf_enabled and signal.direction in ("BUY", "SELL"):
+            htf_trend = self._htf_trend.get(symbol, "flat")
+            blocked = False
+            if signal.direction == "BUY" and htf_trend == "down":
+                blocked = True
+            elif signal.direction == "SELL" and htf_trend == "up":
+                blocked = True
+
+            if blocked:
+                original = signal.direction
+                signal.direction = "NO_TRADE"
+                signal.reasons.append(
+                    f"MTF filter: {original} blocked, higher-TF trend is {htf_trend}"
+                )
+                logger.info(
+                    "MTF filter blocked %s %s (HTF trend=%s)",
+                    original, symbol, htf_trend,
+                )
+                await self.order_manager.process_signal(session, signal, account_balance)
+                result["filters"]["mtf"] = f"Blocked: {original} vs HTF {htf_trend}"
+                return result
+            result["filters"]["mtf"] = f"Passed: {signal.direction} aligns with HTF {htf_trend}"
+
+        # Correlation filter: avoid opening same-direction trades on highly correlated symbols
+        if signal.direction in ("BUY", "SELL"):
+            corr_blocked, corr_msg = await self._check_correlation_filter(
+                session, symbol, signal.direction,
+            )
+            if corr_blocked:
+                original = signal.direction
+                signal.direction = "NO_TRADE"
+                signal.reasons.append(f"Correlation filter: {corr_msg}")
+                logger.info("Correlation filter blocked %s %s: %s", original, symbol, corr_msg)
+                await self.order_manager.process_signal(session, signal, account_balance)
+                result["filters"]["correlation"] = corr_msg
+                return result
+
         # ML scoring — require score > 0.6 for high-analysis trades
         # Only gate on ML score when the model is actually trained;
         # an untrained model always returns 0.5, which would deadlock trading.
@@ -531,9 +596,15 @@ class TradingScheduler:
                 await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 
+        # Adaptive position sizing: adjust risk based on recent performance
+        effective_balance = account_balance
+        if settings.adaptive_sizing_enabled:
+            effective_balance = await self._get_adaptive_balance(session, account_balance)
+            result["adaptive_balance"] = effective_balance
+
         # Execute trade
         trade_result = await self.order_manager.process_signal(
-            session, signal, account_balance,
+            session, signal, effective_balance,
         )
         result["trade"] = trade_result
 
@@ -549,6 +620,202 @@ class TradingScheduler:
             )
 
         return result
+
+    # ---- Multi-timeframe confirmation helpers ----
+
+    async def _update_htf_trends(self, symbols: list[str]) -> None:
+        """Fetch higher-timeframe candles and determine trend for each symbol.
+
+        Uses EMA20 vs EMA50 on the higher TF to classify trend as
+        up / down / flat.  Called once per cycle so we don't re-fetch
+        per symbol.
+        """
+        htf = settings.mtf_timeframe  # e.g. "HOUR"
+        for symbol in symbols:
+            try:
+                df = await self.market_data.get_candles(symbol, htf, count=60)
+                if df is None or len(df) < 52:
+                    self._htf_trend[symbol] = "flat"
+                    continue
+                closes = df["close"].astype(float)
+                ema20 = calculate_ema(closes, 20)
+                ema50 = calculate_ema(closes, 50)
+                e20 = float(ema20.iloc[-1])
+                e50 = float(ema50.iloc[-1])
+                sep = (e20 - e50) / e50 if e50 != 0 else 0
+                if sep > 0.001:
+                    self._htf_trend[symbol] = "up"
+                elif sep < -0.001:
+                    self._htf_trend[symbol] = "down"
+                else:
+                    self._htf_trend[symbol] = "flat"
+            except Exception as exc:
+                logger.warning("HTF trend fetch failed for %s: %s", symbol, exc)
+                self._htf_trend.setdefault(symbol, "flat")
+
+    # ---- Correlation filter ----
+
+    # Predefined correlation groups — symbols within the same group tend to
+    # move together, so opening the same-direction trade on multiple members
+    # is effectively doubling the same bet.
+    _CORRELATION_GROUPS: list[set[str]] = [
+        # Major USD forex pairs (all move inversely to USD)
+        {"EURUSD", "GBPUSD", "AUDUSD"},
+        # USD-quote pairs (move with USD)
+        {"USDJPY", "USDCAD"},
+        # US tech — highly correlated
+        {"AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"},
+        # US indices
+        {"US100", "US500"},
+        # Precious metals
+        {"GOLD", "SILVER"},
+        # Crypto large-cap
+        {"BTCUSD", "ETHUSD"},
+        # Crypto alt-coins (follow BTC/ETH)
+        {"XRPUSD", "SOLUSD", "DOGEUSD", "ADAUSD", "DOTUSD", "LINKUSD", "LTCUSD"},
+    ]
+
+    async def _check_correlation_filter(
+        self,
+        session: AsyncSession,
+        symbol: str,
+        direction: str,
+    ) -> tuple[bool, str]:
+        """Return (blocked, message) if a correlated symbol already has an
+        open position in the same direction."""
+        # Find which group(s) this symbol belongs to
+        groups = [g for g in self._CORRELATION_GROUPS if symbol in g]
+        if not groups:
+            return False, "No correlation group"
+
+        open_positions = await self.position_manager.get_open_positions(session)
+        for grp in groups:
+            for pos in open_positions:
+                if (
+                    pos.symbol != symbol
+                    and pos.symbol in grp
+                    and pos.direction == direction
+                ):
+                    return True, (
+                        f"Already have {pos.direction} {pos.symbol} "
+                        f"(same correlation group as {symbol})"
+                    )
+        return False, "Correlation check passed"
+
+    # ---- Time-based (stale) trade exit ----
+
+    async def _close_stale_trades(
+        self,
+        session: AsyncSession,
+        account_balance: float,
+    ) -> list[dict]:
+        """Close trades that have been open longer than stale_trade_minutes
+        and are near breakeven (within 0.3% of entry).  This frees up
+        capital for better setups instead of letting dead trades sit."""
+        from datetime import timedelta
+
+        max_minutes = settings.stale_trade_minutes
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_minutes)
+        positions = await self.position_manager.get_open_positions(session)
+        results: list[dict] = []
+
+        prices = await self.market_data.get_current_prices(
+            [p.symbol for p in positions],
+        )
+
+        for pos in positions:
+            opened = pos.opened_at
+            if opened is None:
+                continue
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            if opened > cutoff:
+                continue  # not stale yet
+
+            price_data = prices.get(pos.symbol)
+            if not price_data:
+                continue
+            current_price = (
+                price_data["bid"] if pos.direction == "BUY" else price_data["ask"]
+            )
+            if current_price <= 0 or not pos.entry_price:
+                continue
+
+            # Only exit if the trade is near breakeven (within 0.3% of entry)
+            # — don't close winners that are running or losers already past SL.
+            pct_move = abs(current_price - pos.entry_price) / pos.entry_price
+            if pct_move > 0.003:
+                continue  # trade has moved, let SL/TP or trailing handle it
+
+            minutes_held = (datetime.now(timezone.utc) - opened).total_seconds() / 60
+            close_result = await self.position_manager.close_position(
+                session, pos, current_price, "stale_exit",
+            )
+            results.append({
+                "symbol": pos.symbol,
+                "direction": pos.direction,
+                "minutes_held": minutes_held,
+                "pnl": close_result.get("pnl", 0),
+            })
+            logger.info(
+                "Stale exit: %s %s after %.0f min (pnl=%.2f)",
+                pos.direction, pos.symbol, minutes_held, close_result.get("pnl", 0),
+            )
+        return results
+
+    # ---- Adaptive position sizing ----
+
+    async def _get_adaptive_balance(
+        self,
+        session: AsyncSession,
+        account_balance: float,
+    ) -> float:
+        """Return an effective balance for position sizing that scales
+        risk down after losses and up after wins.
+
+        Logic (simplified Kelly):
+        - Look at the last 10 closed trades.
+        - If win rate >= 60%: use 120% of balance (slightly larger size).
+        - If win rate 40-60%: use 100% (normal).
+        - If win rate < 40%: use 70% of balance (smaller size to protect capital).
+        - If fewer than 5 trades: use 80% (conservative until we have data).
+        """
+        from sqlalchemy import select as sa_select
+        from app.db.models import Position, TradeResult
+
+        result = await session.execute(
+            sa_select(Position)
+            .where(
+                Position.is_open.is_(False),
+                Position.result.in_([TradeResult.WIN, TradeResult.LOSS]),
+            )
+            .order_by(Position.closed_at.desc())
+            .limit(10)
+        )
+        recent = result.scalars().all()
+
+        if len(recent) < 5:
+            # Not enough data — be conservative
+            effective = account_balance * 0.80
+            logger.debug("Adaptive sizing: <5 trades, using 80%% of balance")
+            return effective
+
+        wins = sum(1 for t in recent if t.result == TradeResult.WIN)
+        win_rate = wins / len(recent)
+
+        if win_rate >= 0.6:
+            multiplier = 1.20
+        elif win_rate >= 0.4:
+            multiplier = 1.0
+        else:
+            multiplier = 0.70
+
+        effective = account_balance * multiplier
+        logger.info(
+            "Adaptive sizing: %d/%d wins (%.0f%%), multiplier=%.2f, effective=%.2f",
+            wins, len(recent), win_rate * 100, multiplier, effective,
+        )
+        return effective
 
     async def _record_balance(
         self, session: AsyncSession, balance_data: dict

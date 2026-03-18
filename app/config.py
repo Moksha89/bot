@@ -188,6 +188,28 @@ class Settings:
     auto_optimize_interval_hours: int = field(
         default_factory=lambda: _env_int("AUTO_OPTIMIZE_INTERVAL_HOURS", 24)
     )
+    # Multi-timeframe confirmation: require higher-TF trend agreement
+    mtf_enabled: bool = field(
+        default_factory=lambda: _env_bool("MTF_ENABLED", True)
+    )
+    mtf_timeframe: str = field(
+        default_factory=lambda: _env("MTF_TIMEFRAME", "HOUR")
+    )
+    # Time-based exit: close trades that haven't moved after N minutes
+    stale_trade_exit_enabled: bool = field(
+        default_factory=lambda: _env_bool("STALE_TRADE_EXIT_ENABLED", True)
+    )
+    stale_trade_minutes: int = field(
+        default_factory=lambda: _env_int("STALE_TRADE_MINUTES", 60)
+    )
+    # Adaptive position sizing
+    adaptive_sizing_enabled: bool = field(
+        default_factory=lambda: _env_bool("ADAPTIVE_SIZING_ENABLED", True)
+    )
+    # Breakeven trailing stop settings
+    trailing_stop_breakeven_r: float = field(
+        default_factory=lambda: _env_float("TRAILING_STOP_BREAKEVEN_R", 1.0)
+    )
 
 
 settings = Settings()

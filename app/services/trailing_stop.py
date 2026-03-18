@@ -39,6 +39,12 @@ class TrailingStopConfig:
     trail_percent: float = 0.5
     # Step size: minimum price move before adjusting SL
     step_size: float = 0.0
+    # Move SL to breakeven after this many R multiples of profit.
+    # Set to 0 to disable breakeven behaviour.
+    breakeven_r: float = 1.0
+    # Small buffer (in R) added on top of entry when moving to breakeven
+    # so that spread/commission is covered and the trade is truly risk-free.
+    breakeven_buffer_r: float = 0.1
 
 
 class TrailingStopManager:
@@ -52,6 +58,8 @@ class TrailingStopManager:
         self.client = client
         # Track highest/lowest price seen for each position
         self._peak_prices: dict[int, float] = {}
+        # Track whether breakeven has already been applied
+        self._breakeven_applied: set[int] = set()
 
     async def update_trailing_stops(
         self,
@@ -146,6 +154,31 @@ class TrailingStopManager:
         else:
             profit_r = (entry - current_price) / initial_risk
 
+        # ---- Breakeven logic: move SL to entry + buffer once profit >= breakeven_r ----
+        if (
+            self.config.breakeven_r > 0
+            and pos_id not in self._breakeven_applied
+            and profit_r >= self.config.breakeven_r
+        ):
+            buffer = initial_risk * self.config.breakeven_buffer_r
+            if position.direction == "BUY":
+                be_sl = round(entry + buffer, 5)
+                # Only move if it actually improves the SL
+                if sl is None or be_sl > sl:
+                    self._breakeven_applied.add(pos_id)
+                    return {
+                        "new_sl": be_sl,
+                        "reason": f"Breakeven: profit {profit_r:.1f}R >= {self.config.breakeven_r}R, SL->entry+buffer",
+                    }
+            else:
+                be_sl = round(entry - buffer, 5)
+                if sl is None or be_sl < sl:
+                    self._breakeven_applied.add(pos_id)
+                    return {
+                        "new_sl": be_sl,
+                        "reason": f"Breakeven: profit {profit_r:.1f}R >= {self.config.breakeven_r}R, SL->entry-buffer",
+                    }
+
         # Check if trailing should be activated
         if profit_r < self.config.activation_r:
             # Not yet in enough profit to activate trailing
@@ -212,3 +245,4 @@ class TrailingStopManager:
     def cleanup_closed_position(self, position_id: int) -> None:
         """Remove tracking data for a closed position."""
         self._peak_prices.pop(position_id, None)
+        self._breakeven_applied.discard(position_id)
