@@ -273,6 +273,36 @@ class CapitalClient:
         data = await self._request("GET", "/api/v1/history/activity", params=params)
         return data.get("activities", [])
 
+    async def get_market_constraints(self, epic: str) -> dict:
+        """Get market constraints for order validation.
+
+        Returns dict with keys:
+            bid, ask, min_stop_pct, min_deal_size, min_size_increment
+        """
+        info = await self.get_market_info(epic)
+        rules = info.get("dealingRules", {})
+        snapshot = info.get("snapshot", {})
+
+        min_stop = rules.get("minStopOrProfitDistance", {})
+        min_stop_pct = float(min_stop.get("value", 0.01)) if min_stop.get("unit") == "PERCENTAGE" else 0.0
+        # If unit is POINTS, store raw value as points distance
+        min_stop_points = float(min_stop.get("value", 0)) if min_stop.get("unit") == "POINTS" else 0.0
+
+        min_deal = rules.get("minDealSize", {})
+        min_deal_size = float(min_deal.get("value", 0.01))
+
+        min_inc = rules.get("minSizeIncrement", {})
+        min_size_increment = float(min_inc.get("value", 0.01))
+
+        return {
+            "bid": float(snapshot.get("bid", 0)),
+            "ask": float(snapshot.get("offer", 0)),
+            "min_stop_pct": min_stop_pct,
+            "min_stop_points": min_stop_points,
+            "min_deal_size": min_deal_size,
+            "min_size_increment": min_size_increment,
+        }
+
     # --- Orders ---
 
     async def place_order(
@@ -305,6 +335,7 @@ class CapitalClient:
             stop_loss,
             take_profit,
         )
+        logger.info("Order payload: %s", payload)
         result = await self._request("POST", POSITIONS_ENDPOINT, json_data=payload)
         logger.info("Order result: %s", result)
         return result

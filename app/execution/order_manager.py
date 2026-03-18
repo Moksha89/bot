@@ -4,6 +4,7 @@ Validates signals, places orders, and records results.
 """
 
 import logging
+import math
 import traceback
 from datetime import datetime, timezone
 from typing import Optional
@@ -127,7 +128,7 @@ class OrderManager:
             return await self._paper_order(session, signal, signal_id, size)
 
         # Demo/Live: place real order
-        return await self._live_order(session, signal, signal_id, size)
+        return await self._live_order(session, signal, signal_id, size, account_balance)
 
     async def _paper_order(
         self,
@@ -184,22 +185,150 @@ class OrderManager:
             "tp": signal.take_profit,
         }
 
+    def _validate_and_adjust_order(
+        self,
+        direction: str,
+        close_price: float,
+        stop_loss: float,
+        take_profit: float,
+        size: float,
+        constraints: dict,
+        account_balance: float,
+    ) -> tuple[float, float, float, str]:
+        """Validate and adjust SL/TP/size against Capital.com market constraints.
+
+        Returns (adjusted_sl, adjusted_tp, adjusted_size, warning_msg).
+        The warning_msg is empty if no adjustments were needed.
+        """
+        bid = constraints["bid"]
+        ask = constraints["ask"]
+        min_stop_pct = constraints["min_stop_pct"]
+        min_stop_points = constraints["min_stop_points"]
+        min_deal_size = constraints["min_deal_size"]
+        min_size_increment = constraints["min_size_increment"]
+
+        warnings: list[str] = []
+        adj_sl = stop_loss
+        adj_tp = take_profit
+        adj_size = size
+
+        # Calculate minimum stop distance as an absolute value
+        ref_price = bid if direction == "BUY" else ask
+        if min_stop_pct > 0:
+            min_distance = ref_price * (min_stop_pct / 100.0)
+        elif min_stop_points > 0:
+            min_distance = min_stop_points
+        else:
+            min_distance = 0.0
+
+        # Add a small buffer (50% extra) to avoid edge-case rejections
+        safe_distance = min_distance * 1.5 if min_distance > 0 else 0.0
+
+        # For BUY: SL must be below bid; for SELL: SL must be above ask
+        if direction == "BUY":
+            max_allowed_sl = bid - safe_distance
+            if adj_sl > max_allowed_sl:
+                original_sl = adj_sl
+                adj_sl = max_allowed_sl
+                # Recalculate TP to maintain original risk-reward ratio
+                original_risk = close_price - original_sl
+                new_risk = close_price - adj_sl
+                if original_risk > 0:
+                    rr_ratio = (adj_tp - close_price) / original_risk
+                    adj_tp = close_price + (new_risk * rr_ratio)
+                warnings.append(
+                    f"SL adjusted {original_sl:.5f}->{adj_sl:.5f} (bid={bid})"
+                )
+        else:  # SELL
+            min_allowed_sl = ask + safe_distance
+            if adj_sl < min_allowed_sl:
+                original_sl = adj_sl
+                adj_sl = min_allowed_sl
+                original_risk = original_sl - close_price
+                new_risk = adj_sl - close_price
+                if original_risk > 0:
+                    rr_ratio = (close_price - adj_tp) / original_risk
+                    adj_tp = close_price - (new_risk * rr_ratio)
+                warnings.append(
+                    f"SL adjusted {original_sl:.5f}->{adj_sl:.5f} (ask={ask})"
+                )
+
+        # Recalculate position size based on wider stop
+        sl_distance = abs(close_price - adj_sl)
+        if sl_distance > 0:
+            risk_amount = account_balance * settings.risk.risk_per_trade
+            adj_size = risk_amount / sl_distance
+
+        # Enforce minimum deal size
+        if adj_size < min_deal_size:
+            warnings.append(
+                f"Size {adj_size:.4f} below min {min_deal_size}, using min"
+            )
+            adj_size = min_deal_size
+
+        # Round size to increment
+        if min_size_increment > 0:
+            adj_size = math.floor(adj_size / min_size_increment) * min_size_increment
+            if adj_size < min_deal_size:
+                adj_size = min_deal_size
+
+        # Round SL/TP to reasonable precision
+        if ref_price > 1000:
+            precision = 1
+        elif ref_price > 10:
+            precision = 2
+        elif ref_price > 1:
+            precision = 3
+        else:
+            precision = 5
+        adj_sl = round(adj_sl, precision)
+        adj_tp = round(adj_tp, precision)
+
+        return adj_sl, adj_tp, adj_size, "; ".join(warnings)
+
     async def _live_order(
         self,
         session: AsyncSession,
         signal: TradeSignal,
         signal_id: int,
         size: float,
+        account_balance: float = 0.0,
     ) -> dict:
         """Place a real order via Capital.com API."""
+        # Fetch market constraints and adjust SL/TP/size
+        sl = signal.stop_loss
+        tp = signal.take_profit
+        adj_size = size
+        try:
+            constraints = await self.client.get_market_constraints(signal.symbol)
+            sl, tp, adj_size, adj_warnings = self._validate_and_adjust_order(
+                direction=signal.direction,
+                close_price=signal.close_price,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                size=size,
+                constraints=constraints,
+                account_balance=account_balance,
+            )
+            if adj_warnings:
+                logger.info(
+                    "Order adjusted for %s %s: %s",
+                    signal.direction, signal.symbol, adj_warnings,
+                )
+        except Exception as e:
+            logger.warning(
+                "Could not fetch market constraints for %s, using original values: %s",
+                signal.symbol, e,
+            )
+
         order = Order(
             signal_id=signal_id,
             symbol=signal.symbol,
             direction=signal.direction,
-            size=size,
+            size=adj_size,
             entry_price=signal.close_price,
-            stop_loss=signal.stop_loss,
-            take_profit=signal.take_profit,
+            stop_loss=sl,
+            take_profit=tp,
             status=OrderStatus.PENDING,
         )
         session.add(order)
@@ -209,9 +338,9 @@ class OrderManager:
             result = await self.client.place_order(
                 epic=signal.symbol,
                 direction=signal.direction,
-                size=size,
-                stop_loss=signal.stop_loss,
-                take_profit=signal.take_profit,
+                size=adj_size,
+                stop_loss=sl,
+                take_profit=tp,
             )
 
             deal_reference = result.get("dealReference", "")
@@ -230,10 +359,10 @@ class OrderManager:
                         position = Position(
                             symbol=signal.symbol,
                             direction=signal.direction,
-                            size=size,
+                            size=adj_size,
                             entry_price=float(confirmation.get("level", signal.close_price)),
-                            stop_loss=signal.stop_loss,
-                            take_profit=signal.take_profit,
+                            stop_loss=sl,
+                            take_profit=tp,
                             deal_id=deal_id,
                             is_open=True,
                         )
@@ -260,7 +389,7 @@ class OrderManager:
                 "Order placed: %s %s size=%.2f status=%s deal=%s",
                 signal.direction,
                 signal.symbol,
-                size,
+                adj_size,
                 order.status.value,
                 order.deal_id,
             )
@@ -270,10 +399,10 @@ class OrderManager:
                 "deal_id": order.deal_id,
                 "deal_reference": deal_reference,
                 "direction": signal.direction,
-                "size": size,
+                "size": adj_size,
                 "entry": signal.close_price,
-                "sl": signal.stop_loss,
-                "tp": signal.take_profit,
+                "sl": sl,
+                "tp": tp,
             }
 
         except CapitalAPIError as e:
