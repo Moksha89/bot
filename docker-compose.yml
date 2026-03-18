@@ -12,7 +12,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      - ./trading_bot.log:/app/trading_bot.log
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/healthz'); assert r.status_code == 200"]
       interval: 30s
