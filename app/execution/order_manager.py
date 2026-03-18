@@ -411,11 +411,11 @@ class OrderManager:
                         session.add(position)
                     else:
                         order.status = OrderStatus.REJECTED
-                        reason = confirmation.get("reason", "Unknown")
+                        reason = confirmation.get("reason", confirmation.get("rejectReason", "Unknown"))
                         order.error_message = f"Rejected: {reason}"
                         logger.warning(
-                            "Order REJECTED for %s %s size=%.2f: %s",
-                            signal.direction, signal.symbol, adj_size, reason,
+                            "Order REJECTED for %s %s size=%.2f: reason=%s full=%s",
+                            signal.direction, signal.symbol, adj_size, reason, confirmation,
                         )
                 except CapitalAPIError as e:
                     order.status = OrderStatus.FAILED
