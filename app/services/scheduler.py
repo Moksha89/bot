@@ -442,8 +442,8 @@ class TradingScheduler:
                 signal.direction, symbol, combined_rec, combined_confidence,
             )
 
-            # Only block trade if AI is highly confident in rejection (>85%)
-            if combined_rec == "REJECT" and combined_confidence > 85.0:
+            # Only block trade if AI is very highly confident in rejection (>90%)
+            if combined_rec == "REJECT" and combined_confidence > 90.0:
                 original_direction = signal.direction
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"AI REJECTED (conf={combined_confidence:.0f}%): {ai_analysis['analysis']}")
@@ -454,7 +454,7 @@ class TradingScheduler:
                 return result
             elif combined_rec == "REJECT":
                 logger.info(
-                    "AI soft-reject for %s %s (conf=%.1f%% <= 85%%), proceeding with trade",
+                    "AI soft-reject for %s %s (conf=%.1f%% <= 90%%), proceeding with trade",
                     signal.direction, symbol, combined_confidence,
                 )
             # HOLD is treated as advisory — don't block the trade

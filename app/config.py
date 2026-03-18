@@ -46,7 +46,13 @@ class CapitalConfig:
 class TradingConfig:
     symbol: str = field(default_factory=lambda: _env("TRADING_SYMBOL", "XAUUSD"))
     symbols: list[str] = field(default_factory=lambda: [
-        s.strip() for s in _env("TRADING_SYMBOLS", "GOLD,EURUSD,US100,BTCUSD,ETHUSD").split(",") if s.strip()
+        s.strip() for s in _env(
+            "TRADING_SYMBOLS",
+            "GOLD,SILVER,OIL_CRUDE,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,"
+            "US100,US500,DE40,UK100,"
+            "BTCUSD,ETHUSD,XRPUSD,SOLUSD,DOGEUSD,ADAUSD,DOTUSD,LINKUSD,LTCUSD,"
+            "AAPL,TSLA,NVDA,AMZN,GOOGL,META,MSFT"
+        ).split(",") if s.strip()
     ])
     timeframe: str = field(default_factory=lambda: _env("TRADING_TIMEFRAME", "HOUR"))
     mode: str = field(default_factory=lambda: _env("TRADING_MODE", "demo"))
@@ -58,30 +64,30 @@ class StrategyConfig:
     ema_fast: int = field(default_factory=lambda: _env_int("EMA_FAST", 20))
     ema_slow: int = field(default_factory=lambda: _env_int("EMA_SLOW", 50))
     rsi_period: int = field(default_factory=lambda: _env_int("RSI_PERIOD", 14))
-    rsi_buy_min: float = field(default_factory=lambda: _env_float("RSI_BUY_MIN", 55))
-    rsi_buy_max: float = field(default_factory=lambda: _env_float("RSI_BUY_MAX", 70))
-    rsi_sell_min: float = field(default_factory=lambda: _env_float("RSI_SELL_MIN", 30))
-    rsi_sell_max: float = field(default_factory=lambda: _env_float("RSI_SELL_MAX", 45))
+    rsi_buy_min: float = field(default_factory=lambda: _env_float("RSI_BUY_MIN", 40))
+    rsi_buy_max: float = field(default_factory=lambda: _env_float("RSI_BUY_MAX", 80))
+    rsi_sell_min: float = field(default_factory=lambda: _env_float("RSI_SELL_MIN", 20))
+    rsi_sell_max: float = field(default_factory=lambda: _env_float("RSI_SELL_MAX", 60))
     max_spread: float = field(default_factory=lambda: _env_float("MAX_SPREAD", 5.0))
-    require_breakout: bool = field(default_factory=lambda: _env_bool("REQUIRE_BREAKOUT", True))
+    require_breakout: bool = field(default_factory=lambda: _env_bool("REQUIRE_BREAKOUT", False))
 
 
 @dataclass
 class RiskConfig:
     risk_per_trade: float = field(
-        default_factory=lambda: _env_float("RISK_PER_TRADE", 0.01)
+        default_factory=lambda: _env_float("RISK_PER_TRADE", 0.05)
     )
     max_daily_loss: float = field(
-        default_factory=lambda: _env_float("MAX_DAILY_LOSS", 0.05)
+        default_factory=lambda: _env_float("MAX_DAILY_LOSS", 0.15)
     )
     max_consecutive_losses: int = field(
-        default_factory=lambda: _env_int("MAX_CONSECUTIVE_LOSSES", 3)
+        default_factory=lambda: _env_int("MAX_CONSECUTIVE_LOSSES", 5)
     )
     cooldown_minutes: int = field(
-        default_factory=lambda: _env_int("COOLDOWN_MINUTES", 30)
+        default_factory=lambda: _env_int("COOLDOWN_MINUTES", 10)
     )
     max_open_trades: int = field(
-        default_factory=lambda: _env_int("MAX_OPEN_TRADES", 1)
+        default_factory=lambda: _env_int("MAX_OPEN_TRADES", 5)
     )
     sl_atr_multiplier: float = field(
         default_factory=lambda: _env_float("SL_ATR_MULTIPLIER", 1.5)
@@ -90,13 +96,13 @@ class RiskConfig:
         default_factory=lambda: _env_float("TP_RISK_REWARD", 2.0)
     )
     max_portfolio_risk: float = field(
-        default_factory=lambda: _env_float("MAX_PORTFOLIO_RISK", 0.10)
+        default_factory=lambda: _env_float("MAX_PORTFOLIO_RISK", 0.30)
     )
     max_correlated_exposure: float = field(
-        default_factory=lambda: _env_float("MAX_CORRELATED_EXPOSURE", 0.15)
+        default_factory=lambda: _env_float("MAX_CORRELATED_EXPOSURE", 0.25)
     )
     max_total_positions: int = field(
-        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 5)
+        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 15)
     )
 
 
@@ -159,7 +165,7 @@ class Settings:
         default_factory=lambda: _env_float("TRAILING_STOP_ATR_MULT", 1.0)
     )
     session_filter_enabled: bool = field(
-        default_factory=lambda: _env_bool("SESSION_FILTER_ENABLED", True)
+        default_factory=lambda: _env_bool("SESSION_FILTER_ENABLED", False)
     )
     allowed_sessions: str = field(
         default_factory=lambda: _env("ALLOWED_SESSIONS", "london,new_york")

@@ -159,16 +159,22 @@ class RiskManager:
         stop_loss: float,
     ) -> float:
         """
-        Calculate position size based on risk per trade.
+        Calculate position size based on risk per trade with compounding.
+        As account grows, position sizes grow proportionally.
         risk_amount = account_balance * risk_per_trade
         size = risk_amount / distance_to_stop
         """
+        # Compounding: risk percentage is applied to current balance,
+        # so as account grows, position sizes automatically increase.
         risk_amount = account_balance * self.risk_per_trade
         distance = abs(entry_price - stop_loss)
         if distance == 0:
             logger.warning("Stop loss distance is zero, returning minimum size")
             return 0.01
         size = risk_amount / distance
+        # Cap maximum size to prevent over-leveraging on a single trade
+        max_size_by_balance = account_balance * 0.5 / entry_price if entry_price > 0 else size
+        size = min(size, max_size_by_balance)
         return round(max(size, 0.01), 2)
 
     async def validate_trade(

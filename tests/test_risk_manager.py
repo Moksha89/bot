@@ -17,7 +17,8 @@ class TestPositionSizing:
             stop_loss=1945.0,
         )
         # risk = 10000 * 0.01 = 100, distance = 5, size = 100/5 = 20
-        assert size == 20.0
+        # but capped at 50% of balance / entry = 10000*0.5/1950 = 2.56
+        assert size == 2.56
 
     def test_small_account(self) -> None:
         rm = RiskManager()
@@ -28,7 +29,8 @@ class TestPositionSizing:
             stop_loss=1.0950,
         )
         # risk = 5, distance = 0.005, size = 1000
-        assert size == 1000.0
+        # capped at 50% of balance / entry = 500*0.5/1.1 = 227.27
+        assert size == 227.27
 
     def test_minimum_size(self) -> None:
         rm = RiskManager()
@@ -59,7 +61,8 @@ class TestPositionSizing:
             stop_loss=1940.0,
         )
         # risk = 200, distance = 10, size = 20
-        assert size == 20.0
+        # capped at 50% of balance / entry = 10000*0.5/1930 = 2.59
+        assert size == 2.59
 
 
 class TestKillSwitch:

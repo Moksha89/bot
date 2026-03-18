@@ -27,6 +27,7 @@ class StrategyType(str, Enum):
     BREAKOUT = "breakout"
     MEAN_REVERSION = "mean_reversion"
     SWING = "swing"
+    SCALPING = "scalping"
 
 
 @dataclass
@@ -385,6 +386,99 @@ class SwingTradingStrategy:
         )
 
 
+class ScalpingStrategy:
+    """
+    Scalping strategy for quick 1-5 minute trades.
+    Uses fast EMA crossover (5/13), RSI extremes, and momentum for rapid entries/exits.
+    Targets small moves with tight stops for high win rate.
+    """
+
+    name = StrategyType.SCALPING
+
+    def evaluate(
+        self,
+        df: pd.DataFrame,
+        snapshot: MarketSnapshot,
+        ema_fast_period: int = 5,
+        ema_slow_period: int = 13,
+        rsi_oversold: float = 25,
+        rsi_overbought: float = 75,
+        sl_atr_mult: float = 0.8,
+        tp_rr: float = 1.5,
+        max_spread: float = 3.0,
+    ) -> StrategyResult:
+        """Evaluate scalping strategy — fast in-and-out trades."""
+        if len(df) < ema_slow_period + 5:
+            return StrategyResult(
+                strategy=self.name, direction="NO_TRADE", confidence=0.0,
+                reasons=["Insufficient data for scalping"],
+            )
+
+        closes = df["close"].astype(float)
+        ema_fast = calculate_ema(closes, ema_fast_period)
+        ema_slow = calculate_ema(closes, ema_slow_period)
+
+        curr_fast = float(ema_fast.iloc[-1])
+        curr_slow = float(ema_slow.iloc[-1])
+        prev_fast = float(ema_fast.iloc[-2])
+        prev_slow = float(ema_slow.iloc[-2])
+
+        # Detect fresh crossover (happened in the last bar)
+        bullish_cross = prev_fast <= prev_slow and curr_fast > curr_slow
+        bearish_cross = prev_fast >= prev_slow and curr_fast < curr_slow
+
+        # Momentum: price velocity over last 3 bars
+        if len(closes) >= 4:
+            momentum = (float(closes.iloc[-1]) - float(closes.iloc[-4])) / float(closes.iloc[-4]) * 100
+        else:
+            momentum = 0.0
+
+        reasons: list[str] = []
+
+        # Scalp BUY: fresh bullish crossover + RSI not overbought + positive momentum
+        if (
+            bullish_cross
+            and snapshot.rsi < rsi_overbought
+            and snapshot.rsi > rsi_oversold
+            and momentum > 0
+            and snapshot.spread <= max_spread
+            and not snapshot.has_open_long
+        ):
+            sl = snapshot.close - (snapshot.atr * sl_atr_mult)
+            risk = snapshot.close - sl
+            tp = snapshot.close + (risk * tp_rr)
+            confidence = min(0.6 + abs(momentum) * 0.1 + (snapshot.rsi - 40) / 200, 1.0)
+            reasons.append(f"Scalp BUY: EMA5/13 bullish cross, momentum={momentum:.2f}%")
+            return StrategyResult(
+                strategy=self.name, direction="BUY", confidence=confidence,
+                stop_loss=round(sl, 5), take_profit=round(tp, 5), reasons=reasons,
+            )
+
+        # Scalp SELL: fresh bearish crossover + RSI not oversold + negative momentum
+        if (
+            bearish_cross
+            and snapshot.rsi > rsi_oversold
+            and snapshot.rsi < rsi_overbought
+            and momentum < 0
+            and snapshot.spread <= max_spread
+            and not snapshot.has_open_short
+        ):
+            sl = snapshot.close + (snapshot.atr * sl_atr_mult)
+            risk = sl - snapshot.close
+            tp = snapshot.close - (risk * tp_rr)
+            confidence = min(0.6 + abs(momentum) * 0.1 + (60 - snapshot.rsi) / 200, 1.0)
+            reasons.append(f"Scalp SELL: EMA5/13 bearish cross, momentum={momentum:.2f}%")
+            return StrategyResult(
+                strategy=self.name, direction="SELL", confidence=confidence,
+                stop_loss=round(sl, 5), take_profit=round(tp, 5), reasons=reasons,
+            )
+
+        return StrategyResult(
+            strategy=self.name, direction="NO_TRADE", confidence=0.0,
+            reasons=["No scalping setup detected"],
+        )
+
+
 class StrategySelector:
     """
     Selects the best strategy based on market conditions.
@@ -397,6 +491,7 @@ class StrategySelector:
         self.breakout = BreakoutStrategy()
         self.mean_reversion = MeanReversionStrategy()
         self.swing = SwingTradingStrategy()
+        self.scalping = ScalpingStrategy()
 
     def detect_market_regime(self, df: pd.DataFrame, lookback: int = 30) -> str:
         """
@@ -461,14 +556,18 @@ class StrategySelector:
                 k: v for k, v in kwargs.items()
                 if k in ("max_spread", "sl_atr_mult", "tp_rr")
             }),
+            self.scalping.evaluate(df, snapshot, **{
+                k: v for k, v in kwargs.items()
+                if k in ("max_spread", "sl_atr_mult", "tp_rr")
+            }),
         ]
 
         # Apply regime weighting
         regime_weights = {
-            "trending": {StrategyType.EMA_CROSSOVER: 1.3, StrategyType.BREAKOUT: 1.1, StrategyType.MEAN_REVERSION: 0.5, StrategyType.SWING: 1.2},
-            "ranging": {StrategyType.EMA_CROSSOVER: 0.7, StrategyType.BREAKOUT: 0.8, StrategyType.MEAN_REVERSION: 1.3, StrategyType.SWING: 0.6},
-            "volatile": {StrategyType.EMA_CROSSOVER: 0.8, StrategyType.BREAKOUT: 1.2, StrategyType.MEAN_REVERSION: 0.9, StrategyType.SWING: 0.7},
-            "unknown": {StrategyType.EMA_CROSSOVER: 1.0, StrategyType.BREAKOUT: 1.0, StrategyType.MEAN_REVERSION: 1.0, StrategyType.SWING: 1.0},
+            "trending": {StrategyType.EMA_CROSSOVER: 1.3, StrategyType.BREAKOUT: 1.1, StrategyType.MEAN_REVERSION: 0.5, StrategyType.SWING: 1.2, StrategyType.SCALPING: 1.0},
+            "ranging": {StrategyType.EMA_CROSSOVER: 0.7, StrategyType.BREAKOUT: 0.8, StrategyType.MEAN_REVERSION: 1.3, StrategyType.SWING: 0.6, StrategyType.SCALPING: 1.2},
+            "volatile": {StrategyType.EMA_CROSSOVER: 0.8, StrategyType.BREAKOUT: 1.2, StrategyType.MEAN_REVERSION: 0.9, StrategyType.SWING: 0.7, StrategyType.SCALPING: 1.3},
+            "unknown": {StrategyType.EMA_CROSSOVER: 1.0, StrategyType.BREAKOUT: 1.0, StrategyType.MEAN_REVERSION: 1.0, StrategyType.SWING: 1.0, StrategyType.SCALPING: 1.0},
         }
         weights = regime_weights.get(regime, regime_weights["unknown"])
 
