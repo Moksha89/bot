@@ -47,6 +47,20 @@
         .signal-sell { color: #f87171; font-weight: 600; }
         .signal-no_trade { color: #94a3b8; }
         .refresh-info { color: #64748b; font-size: 0.75rem; }
+        .tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 2px solid #334155; }
+        .tab { padding: 0.75rem 1.5rem; cursor: pointer; color: #94a3b8; font-weight: 600; font-size: 0.9rem; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; user-select: none; }
+        .tab:hover { color: #e2e8f0; }
+        .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+        .tab-content { display: none; padding-top: 1.5rem; }
+        .tab-content.active { display: block; }
+        .result-win { color: #34d399; font-weight: 600; }
+        .result-loss { color: #f87171; font-weight: 600; }
+        .result-breakeven { color: #fbbf24; font-weight: 600; }
+        .result-unknown { color: #94a3b8; }
+        .history-summary { display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .history-stat { background: #0f172a; padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.85rem; }
+        .history-stat strong { font-size: 1.1rem; }
+        .table-scroll { overflow-x: auto; }
     </style>
 </head>
 <body>
@@ -123,43 +137,64 @@
             </table>
         </div>
 
-        <!-- Recent Trades -->
-        <div class="section">
-            <h2>Recent Trades</h2>
-            <table>
-                <thead>
-                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Result</th><th>Closed</th></tr>
-                </thead>
-                <tbody id="recentTrades">
-                    <tr><td colspan="8" style="text-align:center;color:#64748b">No trades yet</td></tr>
-                </tbody>
-            </table>
+        <!-- Tabs Navigation -->
+        <div class="tabs">
+            <div class="tab active" data-tab="history" onclick="switchTab('history')">Trade History</div>
+            <div class="tab" data-tab="signals" onclick="switchTab('signals')">Signals</div>
+            <div class="tab" data-tab="errors" onclick="switchTab('errors')">Errors</div>
         </div>
 
-        <!-- Recent Signals -->
-        <div class="section">
-            <h2>Recent Signals</h2>
-            <table>
-                <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Direction</th><th>RSI</th><th>EMA Fast</th><th>EMA Slow</th><th>Acted On</th></tr>
-                </thead>
-                <tbody id="recentSignals">
-                    <tr><td colspan="7" style="text-align:center;color:#64748b">No signals yet</td></tr>
-                </tbody>
-            </table>
+        <!-- Tab: Trade History -->
+        <div id="tab-history" class="tab-content active">
+            <div class="section" style="border-color:#fbbf24">
+                <h2>Trade History</h2>
+                <div class="history-summary" id="historySummary">
+                    <div class="history-stat">Total Closed: <strong id="histTotalClosed">0</strong></div>
+                    <div class="history-stat">Wins: <strong id="histWins" class="positive">0</strong></div>
+                    <div class="history-stat">Losses: <strong id="histLosses" class="negative">0</strong></div>
+                    <div class="history-stat">Win Rate: <strong id="histWinRate">0%</strong></div>
+                    <div class="history-stat">Total P&amp;L: <strong id="histTotalPnl" class="neutral">0.00</strong></div>
+                    <div class="history-stat">Avg Duration: <strong id="histAvgDuration">-</strong></div>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>Opened</th><th>Closed</th><th>Duration</th><th>Symbol</th><th>Direction</th><th>Size</th><th>Invested</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Result</th></tr>
+                    </thead>
+                    <tbody id="tradeHistory">
+                        <tr><td colspan="11" style="text-align:center;color:#64748b">Loading trade history...</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
-        <!-- Recent Errors -->
-        <div class="section">
-            <h2>Recent Errors</h2>
-            <table>
-                <thead>
-                    <tr><th>Time</th><th>Module</th><th>Type</th><th>Message</th></tr>
-                </thead>
-                <tbody id="recentErrors">
-                    <tr><td colspan="4" style="text-align:center;color:#64748b">No errors</td></tr>
-                </tbody>
-            </table>
+        <!-- Tab: Signals -->
+        <div id="tab-signals" class="tab-content">
+            <div class="section">
+                <h2>Recent Signals</h2>
+                <table>
+                    <thead>
+                        <tr><th>Time</th><th>Symbol</th><th>Direction</th><th>RSI</th><th>EMA Fast</th><th>EMA Slow</th><th>Acted On</th></tr>
+                    </thead>
+                    <tbody id="recentSignals">
+                        <tr><td colspan="7" style="text-align:center;color:#64748b">No signals yet</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab: Errors -->
+        <div id="tab-errors" class="tab-content">
+            <div class="section">
+                <h2>Recent Errors</h2>
+                <table>
+                    <thead>
+                        <tr><th>Time</th><th>Module</th><th>Type</th><th>Message</th></tr>
+                    </thead>
+                    <tbody id="recentErrors">
+                        <tr><td colspan="4" style="text-align:center;color:#64748b">No errors</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -186,6 +221,22 @@
             if (s.startsWith('WARNING')) return 'suggestion-warning';
             if (s.startsWith('CONSIDER')) return 'suggestion-tp';
             return 'suggestion-hold';
+        }
+
+        function resultClass(r) {
+            if (!r) return 'result-unknown';
+            r = r.toUpperCase();
+            if (r === 'WIN') return 'result-win';
+            if (r === 'LOSS') return 'result-loss';
+            if (r === 'BREAKEVEN') return 'result-breakeven';
+            return 'result-unknown';
+        }
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+            document.querySelector('[data-tab="' + name + '"]').classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
         }
 
         async function loadStatus() {
@@ -263,25 +314,55 @@
             </tr>`).join('');
         }
 
-        async function loadRecentTrades() {
-            const all = await fetchJSON('/dashboard/api/positions');
-            if (!all) return;
-            const closed = all.filter(p => !p.is_open);
-            const tbody = document.getElementById('recentTrades');
-            if (closed.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b">No trades yet</td></tr>';
-            } else {
-                tbody.innerHTML = closed.slice(0, 20).map(p => `<tr>
-                    <td>${p.symbol}</td>
-                    <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
-                    <td>${p.size}</td>
-                    <td>${formatPrice(p.entry_price)}</td>
-                    <td>${formatPrice(p.exit_price)}</td>
-                    <td class="${pnlClass(p.pnl)}">${p.pnl != null ? p.pnl.toFixed(2) : '-'}</td>
-                    <td>${p.result}</td>
-                    <td>${formatTime(p.closed_at)}</td>
-                </tr>`).join('');
+        async function loadTradeHistory() {
+            const data = await fetchJSON('/dashboard/api/trade-history?limit=100');
+            if (!data) return;
+            const tbody = document.getElementById('tradeHistory');
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b">No closed trades yet</td></tr>';
+                document.getElementById('histTotalClosed').textContent = '0';
+                return;
             }
+            var wins = 0, losses = 0, totalPnl = 0, totalDurSec = 0, durCount = 0;
+            data.forEach(function(t) {
+                if (t.result === 'WIN') wins++;
+                else if (t.result === 'LOSS') losses++;
+                totalPnl += t.pnl || 0;
+                if (t.opened_at && t.closed_at) {
+                    var d = (new Date(t.closed_at) - new Date(t.opened_at)) / 1000;
+                    if (d > 0) { totalDurSec += d; durCount++; }
+                }
+            });
+            var total = data.length;
+            var winRate = total > 0 ? (wins / total * 100) : 0;
+            var avgDur = durCount > 0 ? totalDurSec / durCount : 0;
+            var avgDurStr = '-';
+            if (avgDur > 3600) avgDurStr = Math.floor(avgDur/3600) + 'h ' + Math.floor((avgDur%3600)/60) + 'm';
+            else if (avgDur > 60) avgDurStr = Math.floor(avgDur/60) + 'm ' + Math.floor(avgDur%60) + 's';
+            else if (avgDur > 0) avgDurStr = Math.floor(avgDur) + 's';
+            document.getElementById('histTotalClosed').textContent = total;
+            document.getElementById('histWins').textContent = wins;
+            document.getElementById('histLosses').textContent = losses;
+            document.getElementById('histWinRate').textContent = winRate.toFixed(1) + '%';
+            var pnlEl = document.getElementById('histTotalPnl');
+            pnlEl.textContent = totalPnl.toFixed(2);
+            pnlEl.className = pnlClass(totalPnl);
+            document.getElementById('histAvgDuration').textContent = avgDurStr;
+            tbody.innerHTML = data.map(function(t) {
+                return '<tr>' +
+                '<td>' + formatTime(t.opened_at) + '</td>' +
+                '<td>' + formatTime(t.closed_at) + '</td>' +
+                '<td>' + (t.duration || '-') + '</td>' +
+                '<td><strong>' + t.symbol + '</strong></td>' +
+                '<td class="signal-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
+                '<td>' + t.size + '</td>' +
+                '<td>' + (t.invested || 0).toFixed(2) + '</td>' +
+                '<td>' + formatPrice(t.entry_price) + '</td>' +
+                '<td>' + formatPrice(t.exit_price) + '</td>' +
+                '<td class="' + pnlClass(t.pnl) + '"><strong>' + (t.pnl || 0).toFixed(2) + '</strong></td>' +
+                '<td class="' + resultClass(t.result) + '">' + t.result + '</td>' +
+                '</tr>';
+            }).join('');
         }
 
         async function loadSignals() {
@@ -327,13 +408,13 @@
         }
 
         async function refreshAll() {
-            await Promise.all([loadLivePositions(), loadStatus(), loadStats(), loadRecentTrades(), loadSignals(), loadErrors()]);
+            await Promise.all([loadLivePositions(), loadStatus(), loadStats(), loadTradeHistory(), loadSignals(), loadErrors()]);
         }
 
         refreshAll();
         // Fast refresh for live positions (5s), slower for other data (30s)
         setInterval(loadLivePositions, 5000);
-        setInterval(function() { loadStatus(); loadStats(); loadRecentTrades(); loadSignals(); loadErrors(); }, 30000);
+        setInterval(function() { loadStatus(); loadStats(); loadTradeHistory(); loadSignals(); loadErrors(); }, 30000);
     </script>
 </body>
 </html>

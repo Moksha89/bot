@@ -75,7 +75,7 @@ class StrategyConfig:
 @dataclass
 class RiskConfig:
     risk_per_trade: float = field(
-        default_factory=lambda: _env_float("RISK_PER_TRADE", 0.05)
+        default_factory=lambda: _env_float("RISK_PER_TRADE", 0.08)
     )
     max_daily_loss: float = field(
         default_factory=lambda: _env_float("MAX_DAILY_LOSS", 0.15)
@@ -84,16 +84,16 @@ class RiskConfig:
         default_factory=lambda: _env_int("MAX_CONSECUTIVE_LOSSES", 5)
     )
     cooldown_minutes: int = field(
-        default_factory=lambda: _env_int("COOLDOWN_MINUTES", 10)
+        default_factory=lambda: _env_int("COOLDOWN_MINUTES", 5)
     )
     max_open_trades: int = field(
-        default_factory=lambda: _env_int("MAX_OPEN_TRADES", 5)
+        default_factory=lambda: _env_int("MAX_OPEN_TRADES", 10)
     )
     sl_atr_multiplier: float = field(
         default_factory=lambda: _env_float("SL_ATR_MULTIPLIER", 1.5)
     )
     tp_risk_reward: float = field(
-        default_factory=lambda: _env_float("TP_RISK_REWARD", 2.0)
+        default_factory=lambda: _env_float("TP_RISK_REWARD", 3.0)
     )
     max_portfolio_risk: float = field(
         default_factory=lambda: _env_float("MAX_PORTFOLIO_RISK", 0.30)
@@ -102,7 +102,7 @@ class RiskConfig:
         default_factory=lambda: _env_float("MAX_CORRELATED_EXPOSURE", 0.25)
     )
     max_total_positions: int = field(
-        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 15)
+        default_factory=lambda: _env_int("MAX_TOTAL_POSITIONS", 25)
     )
 
 

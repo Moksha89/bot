@@ -446,6 +446,56 @@ async def get_live_positions() -> dict:
         return {"positions": [], "account": {}, "error": str(e)}
 
 
+@router.get("/api/trade-history")
+async def get_trade_history(limit: int = 100) -> list[dict]:
+    """Get full trade history with time, profit/loss, duration, and details."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Position)
+            .where(Position.is_open.is_(False))
+            .order_by(desc(Position.closed_at))
+            .limit(limit)
+        )
+        positions = result.scalars().all()
+
+        history = []
+        for p in positions:
+            duration = ""
+            if p.opened_at and p.closed_at:
+                delta = p.closed_at - p.opened_at
+                total_seconds = int(delta.total_seconds())
+                hours, remainder = divmod(total_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                if hours > 0:
+                    duration = f"{hours}h {minutes}m"
+                elif minutes > 0:
+                    duration = f"{minutes}m {seconds}s"
+                else:
+                    duration = f"{seconds}s"
+
+            invested = (p.entry_price or 0) * (p.size or 0)
+
+            history.append({
+                "id": p.id,
+                "symbol": p.symbol,
+                "direction": p.direction,
+                "size": p.size,
+                "entry_price": p.entry_price,
+                "exit_price": p.exit_price,
+                "stop_loss": p.stop_loss,
+                "take_profit": p.take_profit,
+                "invested": round(invested, 2),
+                "pnl": round(p.pnl, 2) if p.pnl is not None else 0,
+                "result": p.result.value if p.result else "UNKNOWN",
+                "opened_at": p.opened_at.isoformat() if p.opened_at else "",
+                "closed_at": p.closed_at.isoformat() if p.closed_at else "",
+                "duration": duration,
+                "deal_id": p.deal_id or "",
+            })
+
+        return history
+
+
 @router.get("/api/performance")
 async def get_performance() -> dict:
     """Get performance analytics: Sharpe ratio, drawdown, equity curve."""

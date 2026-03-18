@@ -274,6 +274,8 @@ class PositionManager:
                 continue
 
             current_price = prices["bid"] if pos.direction == "BUY" else prices["ask"]
+            if current_price <= 0:
+                continue
             atr = atr_values.get(pos.symbol, 0)
 
             analysis = await self.analyze_position_risk(

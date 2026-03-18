@@ -5,6 +5,7 @@ Main FastAPI application entry point for the Capital.com Trading Bot.
 import logging
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -18,6 +19,7 @@ from app.dashboard.routes import router as dashboard_router, set_scheduler
 from app.services.scheduler import TradingScheduler
 
 # --- Logging setup ---
+Path("logs").mkdir(exist_ok=True)
 logging.basicConfig(
     level=getattr(logging, settings.server.log_level.upper(), logging.INFO),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
