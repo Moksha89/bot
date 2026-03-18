@@ -403,7 +403,7 @@ class ScalpingStrategy:
         ema_slow_period: int = 13,
         rsi_oversold: float = 25,
         rsi_overbought: float = 75,
-        sl_atr_mult: float = 0.8,
+        sl_atr_mult: float = 1.5,
         tp_rr: float = 1.5,
         max_spread: float = 3.0,
     ) -> StrategyResult:
@@ -484,6 +484,7 @@ class StrategySelector:
     Selects the best strategy based on market conditions.
     Evaluates all strategies and picks the one with the highest confidence signal.
     Can also detect market regime (trending vs. ranging) to prioritize strategies.
+    Requires minimum confidence of 0.55 to filter out weak signals.
     """
 
     def __init__(self) -> None:
@@ -582,6 +583,14 @@ class StrategySelector:
             if weighted_score > best_score:
                 best_score = weighted_score
                 best = r
+
+        # Require minimum confidence to avoid weak signals that lead to losses
+        if best is not None and best.confidence < 0.55:
+            logger.info(
+                "Strategy %s signal rejected: confidence %.3f < 0.55 minimum",
+                best.strategy.value, best.confidence,
+            )
+            best = None
 
         if best is None:
             # Combine all reasons for no trade

@@ -57,6 +57,8 @@ async def _get_shared_client() -> CapitalClient:
                 await _shared_client.close()
             except Exception:
                 pass
+            _shared_client = None
+            _shared_client_auth_time = 0.0
 
         client = CapitalClient()
         await client.authenticate()
@@ -560,11 +562,16 @@ async def get_trade_history(limit: int = 100) -> list[dict]:
 
 @router.get("/api/today-pnl")
 async def get_today_pnl() -> dict:
-    """Get today's P&L summary with individual trade breakdown from Capital.com."""
+    """Get today's P&L summary with individual trade breakdown.
+
+    Tries Capital.com transaction history first; falls back to local DB
+    (closed positions with P&L recorded by sync_positions_from_api).
+    """
     today_trades: list[dict] = []
     total_profit = 0.0
     total_loss = 0.0
 
+    # Try Capital.com transaction history API
     try:
         client = await _get_shared_client()
         now = datetime.now(timezone.utc)
@@ -600,6 +607,45 @@ async def get_today_pnl() -> dict:
             })
     except Exception as e:
         logger.warning("Could not fetch today's P&L from Capital.com: %s", e)
+
+    # Fallback: use local DB closed positions from today (with P&L from sync)
+    if not today_trades:
+        try:
+            today_start = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            async with async_session() as session:
+                result_q = await session.execute(
+                    select(Position)
+                    .where(
+                        Position.is_open.is_(False),
+                        Position.closed_at >= today_start,
+                    )
+                    .order_by(desc(Position.closed_at))
+                )
+                positions = result_q.scalars().all()
+                for p in positions:
+                    pnl = round(p.pnl, 2) if p.pnl is not None else 0.0
+                    invested = (p.entry_price or 0) * (p.size or 0)
+                    result_str = "PROFIT" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+                    if pnl > 0:
+                        total_profit += pnl
+                    elif pnl < 0:
+                        total_loss += pnl
+                    today_trades.append({
+                        "symbol": p.symbol,
+                        "direction": p.direction,
+                        "size": p.size,
+                        "entry_price": p.entry_price,
+                        "exit_price": p.exit_price,
+                        "invested": round(invested, 2),
+                        "pnl": pnl,
+                        "result": result_str,
+                        "closed_at": p.closed_at.isoformat() if p.closed_at else "",
+                        "reference": p.deal_id or "",
+                    })
+        except Exception as db_err:
+            logger.warning("Could not fetch today's P&L from local DB: %s", db_err)
 
     wins = sum(1 for t in today_trades if t["result"] == "PROFIT")
     losses = sum(1 for t in today_trades if t["result"] == "LOSS")

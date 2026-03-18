@@ -331,11 +331,59 @@ class TradingScheduler:
         has_long = await self.position_manager.has_open_long(session, symbol)
         has_short = await self.position_manager.has_open_short(session, symbol)
 
-        # Generate signal
+        # Generate signal using basic EMA crossover first
         signal = self.signal_generator.generate(
             df=df, symbol=symbol, timeframe=timeframe, spread=spread,
             has_open_long=has_long, has_open_short=has_short,
         )
+
+        # If basic signal is NO_TRADE, try multi-strategy selector
+        # (scalping, swing, breakout, mean-reversion, EMA crossover)
+        if signal.direction == "NO_TRADE":
+            from app.strategy.indicators import add_all_indicators
+            from app.strategy.rules import MarketSnapshot
+            df_ind = add_all_indicators(
+                df,
+                ema_fast=self.signal_generator.ema_fast,
+                ema_slow=self.signal_generator.ema_slow,
+                rsi_period=self.signal_generator.rsi_period,
+            )
+            if len(df_ind) > self.signal_generator.ema_slow + 1:
+                latest = df_ind.iloc[-1]
+                prev = df_ind.iloc[-2]
+                snapshot = MarketSnapshot(
+                    close=float(latest["close"]),
+                    ema_fast=float(latest["ema_fast"]),
+                    ema_slow=float(latest["ema_slow"]),
+                    rsi=float(latest["rsi"]),
+                    atr=float(latest["atr"]),
+                    prev_high=float(prev["high"]),
+                    prev_low=float(prev["low"]),
+                    spread=spread,
+                    has_open_long=has_long,
+                    has_open_short=has_short,
+                )
+                strat_result = self.strategy_selector.evaluate_all(
+                    df_ind, snapshot,
+                    sl_atr_mult=self.signal_generator.sl_atr_mult,
+                    tp_rr=self.signal_generator.tp_rr,
+                    rsi_buy_min=self.signal_generator.rsi_buy_min,
+                    rsi_buy_max=self.signal_generator.rsi_buy_max,
+                    rsi_sell_min=self.signal_generator.rsi_sell_min,
+                    rsi_sell_max=self.signal_generator.rsi_sell_max,
+                    max_spread=self.signal_generator.max_spread,
+                )
+                if strat_result.direction != "NO_TRADE" and strat_result.stop_loss is not None:
+                    # Override signal with the multi-strategy result
+                    signal.direction = strat_result.direction
+                    signal.stop_loss = strat_result.stop_loss
+                    signal.take_profit = strat_result.take_profit
+                    signal.reasons = strat_result.reasons
+                    logger.info(
+                        "Multi-strategy override: %s %s via %s (conf=%.3f)",
+                        strat_result.direction, symbol,
+                        strat_result.strategy.value, strat_result.confidence,
+                    )
 
         result["signal"] = {
             "direction": signal.direction,

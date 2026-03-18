@@ -247,7 +247,7 @@ class CapitalClient:
         from_date/to_date format: 2024-01-01T00:00:00
         transaction_type: ALL, TRADE, DEPOSIT, WITHDRAWAL
         """
-        params: dict = {"type": transaction_type, "maxSpanInSeconds": 86400}
+        params: dict = {"type": transaction_type}
         if from_date:
             params["from"] = from_date
         if to_date:

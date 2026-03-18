@@ -392,9 +392,30 @@ class PositionManager:
                     pos.deal_id = new_deal_id
                     continue
                 # No match found — position was truly closed externally
+                # Try to get the current price to calculate actual P&L
+                try:
+                    price_data = await self.client.get_current_price(pos.symbol)
+                    if pos.direction == "BUY":
+                        exit_price = price_data.get("bid", 0.0)
+                    else:
+                        exit_price = price_data.get("ask", 0.0)
+                    if exit_price > 0 and pos.entry_price:
+                        if pos.direction == "BUY":
+                            pnl = (exit_price - pos.entry_price) * pos.size
+                        else:
+                            pnl = (pos.entry_price - exit_price) * pos.size
+                        pos.exit_price = exit_price
+                        pos.pnl = round(pnl, 2)
+                        logger.info(
+                            "Position %s P&L calculated: entry=%.5f exit=%.5f pnl=%.2f",
+                            pos.deal_id, pos.entry_price, exit_price, pnl,
+                        )
+                except Exception as price_err:
+                    logger.warning("Could not get exit price for %s: %s", pos.deal_id, price_err)
+
                 logger.info(
-                    "Position %s closed externally, updating local DB",
-                    pos.deal_id,
+                    "Position %s closed externally, updating local DB (pnl=%.2f)",
+                    pos.deal_id, pos.pnl or 0,
                 )
                 pos.is_open = False
                 pos.closed_at = datetime.now(timezone.utc)

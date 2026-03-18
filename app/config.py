@@ -90,7 +90,7 @@ class RiskConfig:
         default_factory=lambda: _env_int("MAX_OPEN_TRADES", 999)
     )
     sl_atr_multiplier: float = field(
-        default_factory=lambda: _env_float("SL_ATR_MULTIPLIER", 1.5)
+        default_factory=lambda: _env_float("SL_ATR_MULTIPLIER", 2.5)
     )
     tp_risk_reward: float = field(
         default_factory=lambda: _env_float("TP_RISK_REWARD", 3.0)
