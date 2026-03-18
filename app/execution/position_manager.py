@@ -190,7 +190,10 @@ class PositionManager:
     async def sync_positions_from_api(self, session: AsyncSession) -> None:
         """
         Sync positions from Capital.com API with local database.
-        Useful for reconciliation in demo/live mode.
+
+        This does two things:
+        1. Import API positions that don't exist locally (e.g., after DB reset)
+        2. Close local positions that no longer exist on the API
 
         Capital.com can return slightly different deal IDs in order confirmation
         vs the positions API (e.g., suffix differs by 1). So we match by both
@@ -203,11 +206,13 @@ class PositionManager:
             api_positions = await self.client.get_positions()
             api_deal_ids = set()
             api_positions_by_key: dict[tuple[str, str, float], str] = {}
+            api_full_data: dict[str, dict] = {}
             for p in api_positions:
                 pos_data = p.get("position", {})
                 market_data = p.get("market", {})
                 deal_id = pos_data.get("dealId", "")
                 api_deal_ids.add(deal_id)
+                api_full_data[deal_id] = p
                 # Also index by symbol+direction+size for fuzzy matching
                 key = (
                     market_data.get("epic", ""),
@@ -216,8 +221,46 @@ class PositionManager:
                 )
                 api_positions_by_key[key] = deal_id
 
-            # Close local positions that are no longer open on the API
+            # Get all local open positions
             local_positions = await self.get_open_positions(session)
+            local_deal_ids = {p.deal_id for p in local_positions if p.deal_id}
+            local_keys = {(p.symbol, p.direction, p.size) for p in local_positions}
+
+            # 1. Import API positions that don't exist locally
+            for deal_id, p in api_full_data.items():
+                if deal_id in local_deal_ids:
+                    continue
+                pos_data = p.get("position", {})
+                market_data = p.get("market", {})
+                epic = market_data.get("epic", "")
+                direction = pos_data.get("direction", "")
+                size = float(pos_data.get("size", 0))
+                # Check fuzzy match too
+                if (epic, direction, size) in local_keys:
+                    continue
+                # Only import symbols we're configured to trade
+                if epic not in settings.trading.symbols:
+                    continue
+                # Import this position
+                entry_price = float(pos_data.get("level", 0))
+                new_pos = Position(
+                    symbol=epic,
+                    direction=direction,
+                    entry_price=entry_price,
+                    size=size,
+                    stop_loss=float(pos_data.get("stopLevel", 0)) or None,
+                    take_profit=float(pos_data.get("limitLevel", 0)) or None,
+                    deal_id=deal_id,
+                    is_open=True,
+                    opened_at=datetime.now(timezone.utc),
+                )
+                session.add(new_pos)
+                logger.info(
+                    "Imported API position: %s %s size=%.2f deal=%s",
+                    direction, epic, size, deal_id,
+                )
+
+            # 2. Close local positions that are no longer open on the API
             for pos in local_positions:
                 if not pos.deal_id:
                     continue

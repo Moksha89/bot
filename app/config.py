@@ -104,7 +104,7 @@ class RiskConfig:
 class DatabaseConfig:
     url: str = field(
         default_factory=lambda: _env(
-            "DATABASE_URL", "sqlite+aiosqlite:///./trading_bot.db"
+            "DATABASE_URL", "sqlite+aiosqlite:///./data/trading_bot.db"
         )
     )
 

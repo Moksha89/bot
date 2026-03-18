@@ -111,6 +111,12 @@ class TradingScheduler:
                 logger.info("Running in %s mode, skipping authentication", settings.trading.mode)
                 self._authenticated = False
 
+            # Sync existing positions from API so we don't place duplicates
+            if settings.trading.mode in ("demo", "live"):
+                async with async_session() as session:
+                    await self.position_manager.sync_positions_from_api(session)
+                    logger.info("Synced existing positions from Capital.com on startup")
+
             # Fetch news events if enabled
             if settings.news_filter_enabled:
                 await self.news_filter.fetch_events()
