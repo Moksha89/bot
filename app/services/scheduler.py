@@ -358,7 +358,9 @@ class TradingScheduler:
             return result
 
         # ML scoring — require score > 0.6 for high-analysis trades
-        if self.ml_scorer.enabled:
+        # Only gate on ML score when the model is actually trained;
+        # an untrained model always returns 0.5, which would deadlock trading.
+        if self.ml_scorer.enabled and self.ml_scorer._is_trained:
             ml_score = self.ml_scorer.score_signal(
                 ema_fast=signal.ema_fast, ema_slow=signal.ema_slow,
                 rsi=signal.rsi, atr=signal.atr,
