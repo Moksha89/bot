@@ -17,6 +17,7 @@ from app.execution.order_manager import OrderManager
 from app.execution.position_manager import PositionManager
 from app.execution.risk_manager import RiskManager
 from app.services.market_data import MarketDataService
+from app.services.ai_analyst import AIAnalyst
 from app.services.notifier import TelegramNotifier
 from app.strategy.signals import SignalGenerator
 
@@ -42,6 +43,7 @@ class TradingScheduler:
         self.order_manager = OrderManager(self.client, self.risk_manager)
         self.position_manager = PositionManager(self.client)
         self.notifier = TelegramNotifier()
+        self.ai_analyst = AIAnalyst()
         self._is_running = False
         self._authenticated = False
 
@@ -142,6 +144,62 @@ class TradingScheduler:
                     signal.ema_slow,
                     signal.rsi,
                 )
+
+                # Step 5b: AI market analysis before trade execution
+                ai_analysis = None
+                if (
+                    signal.direction != "NO_TRADE"
+                    and settings.ai_analysis_enabled
+                    and self.ai_analyst.enabled
+                ):
+                    ai_analysis = await self.ai_analyst.analyze_market(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        df=df,
+                        signal_direction=signal.direction,
+                        indicators={
+                            "ema_fast": signal.ema_fast,
+                            "ema_slow": signal.ema_slow,
+                            "rsi": signal.rsi,
+                            "atr": signal.atr,
+                        },
+                        spread=spread,
+                        account_balance=account_balance,
+                    )
+                    summary["ai_analysis"] = ai_analysis
+                    logger.info(
+                        "AI analysis: %s (confidence: %.1f%%) - %s",
+                        ai_analysis["recommendation"],
+                        ai_analysis["confidence"],
+                        ai_analysis["analysis"][:100],
+                    )
+
+                    # If AI rejects the trade, override signal to NO_TRADE
+                    if ai_analysis["recommendation"] == "REJECT":
+                        logger.warning(
+                            "AI rejected %s signal for %s: %s",
+                            signal.direction,
+                            symbol,
+                            ai_analysis["analysis"],
+                        )
+                        signal.direction = "NO_TRADE"
+                        signal.reasons.append(
+                            f"AI REJECTED: {ai_analysis['analysis']}"
+                        )
+                        await self.notifier.notify_risk_limit(
+                            f"AI rejected {signal.direction} on {symbol}: "
+                            f"{ai_analysis['analysis']}"
+                        )
+                    elif ai_analysis["recommendation"] == "HOLD":
+                        logger.info(
+                            "AI suggests HOLD for %s on %s, skipping trade",
+                            signal.direction,
+                            symbol,
+                        )
+                        signal.direction = "NO_TRADE"
+                        signal.reasons.append(
+                            f"AI HOLD: {ai_analysis['analysis']}"
+                        )
 
                 # Step 6: Process signal
                 result = await self.order_manager.process_signal(

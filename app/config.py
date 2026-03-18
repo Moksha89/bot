@@ -122,6 +122,15 @@ class Settings:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     kill_switch: bool = field(default_factory=lambda: _env_bool("KILL_SWITCH", False))
+    openrouter_api_key: str = field(
+        default_factory=lambda: _env("OPENROUTER_API_KEY")
+    )
+    ai_model: str = field(
+        default_factory=lambda: _env("AI_MODEL", "google/gemini-2.0-flash-001")
+    )
+    ai_analysis_enabled: bool = field(
+        default_factory=lambda: _env_bool("AI_ANALYSIS_ENABLED", True)
+    )
 
 
 settings = Settings()
