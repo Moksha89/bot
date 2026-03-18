@@ -9,6 +9,7 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
+import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.capital_client import CapitalClient, CapitalAPIError
@@ -28,6 +29,7 @@ from app.services.sentiment import SentimentAnalyzer
 from app.services.ml_scorer import MLSignalScorer
 from app.services.auto_optimizer import AutoOptimizer
 from app.services.portfolio import PortfolioManager
+from app.strategy.indicators import calculate_atr
 from app.strategy.signals import SignalGenerator
 from app.strategy.strategies import StrategySelector
 
@@ -268,9 +270,14 @@ class TradingScheduler:
         # Get spread
         spread = await self.market_data.get_spread(symbol)
 
-        # Store latest ATR value for trailing stop updates
-        if "atr" in df.columns and len(df) > 0:
-            self._latest_atr[symbol] = float(df.iloc[-1]["atr"])
+        # Compute and store latest ATR value for trailing stop updates.
+        # We calculate ATR directly here because add_all_indicators() returns
+        # a copy, so the original df won't have the 'atr' column.
+        if len(df) > 0 and all(c in df.columns for c in ("high", "low", "close")):
+            atr_series = calculate_atr(df["high"], df["low"], df["close"])
+            last_atr = atr_series.iloc[-1]
+            if pd.notna(last_atr):
+                self._latest_atr[symbol] = float(last_atr)
 
         # Update portfolio price history for correlation tracking
         if "close" in df.columns:
