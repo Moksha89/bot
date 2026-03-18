@@ -179,9 +179,15 @@ async def get_account_info() -> dict:
     except (CapitalAPIError, Exception) as e:
         logger.error("Failed to fetch account info: %s", e)
         # Reset shared client on auth errors so next request re-authenticates
-        global _shared_client, _shared_client_auth_time
-        _shared_client = None
-        _shared_client_auth_time = 0.0
+        async with _shared_client_lock:
+            global _shared_client, _shared_client_auth_time
+            if _shared_client is not None:
+                try:
+                    await _shared_client.close()
+                except Exception:
+                    pass
+            _shared_client = None
+            _shared_client_auth_time = 0.0
         return {"balance": 0, "equity": 0, "available": 0, "pnl": 0, "currency": "", "error": str(e)}
 
 
@@ -428,9 +434,15 @@ async def get_live_positions() -> dict:
     except (CapitalAPIError, Exception) as e:
         logger.error("Failed to fetch live positions: %s", e)
         # Reset shared client on errors so next request re-authenticates
-        global _shared_client, _shared_client_auth_time  # noqa: F811
-        _shared_client = None
-        _shared_client_auth_time = 0.0
+        async with _shared_client_lock:
+            global _shared_client, _shared_client_auth_time  # noqa: F811
+            if _shared_client is not None:
+                try:
+                    await _shared_client.close()
+                except Exception:
+                    pass
+            _shared_client = None
+            _shared_client_auth_time = 0.0
         return {"positions": [], "account": {}, "error": str(e)}
 
 

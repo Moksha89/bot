@@ -92,8 +92,8 @@ class PerformanceAnalyzer:
         metrics.win_rate = len(wins) / len(pnls) if pnls else 0
         metrics.total_pnl = sum(pnls)
 
-        win_pnls = [p.pnl for p in wins if p.pnl]
-        loss_pnls = [p.pnl for p in losses if p.pnl]
+        win_pnls = [p.pnl for p in wins if p.pnl is not None]
+        loss_pnls = [p.pnl for p in losses if p.pnl is not None]
 
         metrics.avg_win = np.mean(win_pnls) if win_pnls else 0
         metrics.avg_loss = np.mean(loss_pnls) if loss_pnls else 0

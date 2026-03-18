@@ -222,6 +222,14 @@ class MeanReversionStrategy:
         lower_band = float(sma.iloc[-1] - bb_std * std.iloc[-1])
         middle_band = float(sma.iloc[-1])
 
+        # Guard against zero band width (all prices identical)
+        band_width = upper_band - lower_band
+        if band_width < 1e-10:
+            return StrategyResult(
+                strategy=self.name, direction="NO_TRADE", confidence=0.0,
+                reasons=["Bollinger Band width is zero — insufficient volatility"],
+            )
+
         reasons: list[str] = []
 
         # Buy: price at/below lower band + RSI oversold
@@ -231,7 +239,7 @@ class MeanReversionStrategy:
             and snapshot.spread <= max_spread
             and not snapshot.has_open_long
         ):
-            distance_from_band = (lower_band - snapshot.close) / (upper_band - lower_band)
+            distance_from_band = (lower_band - snapshot.close) / band_width
             confidence = min(0.5 + distance_from_band + (rsi_oversold - snapshot.rsi) / 100, 1.0)
             sl = snapshot.close - (snapshot.atr * sl_atr_mult)
             tp = middle_band  # Target the mean
@@ -248,7 +256,7 @@ class MeanReversionStrategy:
             and snapshot.spread <= max_spread
             and not snapshot.has_open_short
         ):
-            distance_from_band = (snapshot.close - upper_band) / (upper_band - lower_band)
+            distance_from_band = (snapshot.close - upper_band) / band_width
             confidence = min(0.5 + distance_from_band + (snapshot.rsi - rsi_overbought) / 100, 1.0)
             sl = snapshot.close + (snapshot.atr * sl_atr_mult)
             tp = middle_band
