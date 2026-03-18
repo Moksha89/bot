@@ -293,16 +293,19 @@ class OrderManager:
             risk_amount = account_balance * settings.risk.risk_per_trade
             adj_size = risk_amount / sl_distance
 
-        # Cap position size by notional value relative to account balance.
-        # Even with leverage, the notional value should not exceed a
-        # conservative multiple of the account to avoid margin rejections.
-        max_leverage_factor = 20  # conservative; most retail is 30:1
-        if ref_price > 0:
-            max_notional = account_balance * max_leverage_factor
-            max_size_by_margin = max_notional / ref_price
+        # Cap position size using the instrument's actual margin factor.
+        # margin_factor is a percentage: e.g., 50 = 50% margin required (2:1 leverage).
+        # Use only 50% of available balance per single trade to leave room for
+        # other open positions and unrealised P&L fluctuations.
+        margin_factor_pct = constraints.get("margin_factor", 50)
+        if ref_price > 0 and margin_factor_pct > 0:
+            margin_per_unit = ref_price * (margin_factor_pct / 100.0)
+            usable_balance = account_balance * 0.5  # reserve half for other trades
+            max_size_by_margin = usable_balance / margin_per_unit
             if adj_size > max_size_by_margin:
                 warnings.append(
-                    f"Size {adj_size:.2f} exceeds margin cap {max_size_by_margin:.2f}"
+                    f"Size {adj_size:.2f} exceeds margin cap {max_size_by_margin:.2f} "
+                    f"(margin_factor={margin_factor_pct}%)"
                 )
                 adj_size = max_size_by_margin
 
@@ -411,11 +414,11 @@ class OrderManager:
                         session.add(position)
                     else:
                         order.status = OrderStatus.REJECTED
-                        reason = confirmation.get("reason", confirmation.get("rejectReason", "Unknown"))
+                        reason = confirmation.get("rejectReason", confirmation.get("reason", "Unknown"))
                         order.error_message = f"Rejected: {reason}"
                         logger.warning(
-                            "Order REJECTED for %s %s size=%.2f: reason=%s full=%s",
-                            signal.direction, signal.symbol, adj_size, reason, confirmation,
+                            "Order REJECTED for %s %s size=%.2f: %s",
+                            signal.direction, signal.symbol, adj_size, reason,
                         )
                 except CapitalAPIError as e:
                     order.status = OrderStatus.FAILED

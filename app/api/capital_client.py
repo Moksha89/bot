@@ -297,6 +297,10 @@ class CapitalClient:
         max_deal = rules.get("maxDealSize", {})
         max_deal_size = float(max_deal.get("value", 0))
 
+        # Margin factor: percentage of position value required as margin
+        # e.g., 50 means 50% margin (2:1 leverage), 5 means 5% margin (20:1)
+        margin_factor = float(info.get("instrument", {}).get("marginFactor", 50))
+
         return {
             "bid": float(snapshot.get("bid", 0)),
             "ask": float(snapshot.get("offer", 0)),
@@ -305,6 +309,7 @@ class CapitalClient:
             "min_deal_size": min_deal_size,
             "min_size_increment": min_size_increment,
             "max_deal_size": max_deal_size,
+            "margin_factor": margin_factor,
         }
 
     # --- Orders ---
