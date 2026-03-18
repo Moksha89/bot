@@ -245,6 +245,30 @@ class OrderManager:
         else:
             min_distance = 0.0
 
+        # Enforce a minimum SL distance of 0.3% of price regardless of ATR.
+        # On short timeframes the ATR-based SL is often just a few pips,
+        # which gets hit by normal spread/noise before the trade can move.
+        min_sl_pct = 0.003  # 0.3% of price
+        min_sl_abs = ref_price * min_sl_pct
+        current_sl_distance = abs(close_price - adj_sl)
+        if current_sl_distance < min_sl_abs:
+            if direction == "BUY":
+                adj_sl = close_price - min_sl_abs
+            else:
+                adj_sl = close_price + min_sl_abs
+            # Recalculate TP to maintain original risk-reward ratio
+            original_distance = abs(close_price - stop_loss)
+            if original_distance > 0:
+                original_tp_distance = abs(take_profit - close_price)
+                rr = original_tp_distance / original_distance
+                if direction == "BUY":
+                    adj_tp = close_price + (min_sl_abs * rr)
+                else:
+                    adj_tp = close_price - (min_sl_abs * rr)
+            warnings.append(
+                f"SL distance {current_sl_distance:.5f} < min {min_sl_abs:.5f} (0.3% of price)"
+            )
+
         # Use the spread as a floor for the buffer — SL must be at least
         # one full spread away from bid/ask to survive price movement
         # between the constraint check and the order placement.

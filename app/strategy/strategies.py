@@ -584,11 +584,13 @@ class StrategySelector:
                 best_score = weighted_score
                 best = r
 
-        # Require minimum confidence to avoid weak signals that lead to losses
-        if best is not None and best.confidence < 0.55:
+        # Require minimum confidence to avoid weak signals that lead to losses.
+        # 0.65 threshold filters out marginal setups that historically lose money.
+        min_confidence = 0.65
+        if best is not None and best.confidence < min_confidence:
             logger.info(
-                "Strategy %s signal rejected: confidence %.3f < 0.55 minimum",
-                best.strategy.value, best.confidence,
+                "Strategy %s signal rejected: confidence %.3f < %.2f minimum",
+                best.strategy.value, best.confidence, min_confidence,
             )
             best = None
 
