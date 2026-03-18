@@ -364,6 +364,9 @@ class TradingScheduler:
                                 pnl=c.get("pnl", 0),
                                 result=c.get("result", ""),
                             )
+                            # Clean up trailing stop tracking for closed position
+                            if "position_id" in c:
+                                self.trailing_stop_manager.cleanup_closed_position(c["position_id"])
                     except Exception as e:
                         logger.warning("SL/TP check failed: %s", e)
 
@@ -397,6 +400,9 @@ class TradingScheduler:
                                     f"Auto-closed {action['direction']} {action['symbol']}: "
                                     f"P&L={action['unrealized_pnl']:.2f} ({action['reasons'][0]})"
                                 )
+                                # Clean up trailing stop tracking for closed position
+                                if "position_id" in action:
+                                    self.trailing_stop_manager.cleanup_closed_position(action["position_id"])
                     except Exception as e:
                         logger.warning("Position risk management failed: %s", e)
 
