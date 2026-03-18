@@ -109,13 +109,14 @@ class OrderManager:
             )
             return {"status": "rejected", "reasons": risk_messages}
 
-        signal_id = await self._record_signal(session, signal, acted_on=True)
-
         # Calculate position size
         if signal.stop_loss is None:
             logger.error("Signal has no stop loss, cannot calculate position size")
+            await self._record_signal(session, signal, acted_on=False)
             await session.commit()
             return None
+
+        signal_id = await self._record_signal(session, signal, acted_on=True)
 
         size = self.risk_manager.calculate_position_size(
             account_balance, signal.close_price, signal.stop_loss

@@ -200,6 +200,6 @@ class NewsFilter:
             currencies.add("USD")
         if "UK100" in symbol or "FTSE" in symbol:
             currencies.add("GBP")
-        if "DE30" in symbol or "DAX" in symbol:
+        if any(x in symbol for x in ["DE30", "DE40", "DAX"]):
             currencies.add("EUR")
         return currencies or {"ALL"}

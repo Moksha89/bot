@@ -140,11 +140,10 @@ class TradingScheduler:
         if settings.kill_switch:
             return {"status": "killed", "message": "Kill switch is activated"}
 
-        # Check session filter
+        # Check session filter (only blocks new signal generation, not position monitoring)
         session_ok, session_msg = self.session_filter.is_trading_allowed()
         if not session_ok:
             logger.info("Session filter: %s", session_msg)
-            return {"status": "session_blocked", "message": session_msg}
 
         symbols = settings.trading.symbols
         timeframe = settings.trading.timeframe
@@ -207,17 +206,20 @@ class TradingScheduler:
                     except Exception as e:
                         logger.warning("ML training failed: %s", e)
 
-                # Process each symbol
-                for symbol in symbols:
-                    try:
-                        result = await self._process_symbol(
-                            session, symbol, timeframe, account_balance,
-                        )
-                        summary["symbol_results"][symbol] = result
-                    except Exception as e:
-                        error_msg = f"Error processing {symbol}: {e}"
-                        summary["errors"].append(error_msg)
-                        logger.error("%s\n%s", error_msg, traceback.format_exc())
+                # Process each symbol (only if session filter allows new trades)
+                if session_ok:
+                    for symbol in symbols:
+                        try:
+                            result = await self._process_symbol(
+                                session, symbol, timeframe, account_balance,
+                            )
+                            summary["symbol_results"][symbol] = result
+                        except Exception as e:
+                            error_msg = f"Error processing {symbol}: {e}"
+                            summary["errors"].append(error_msg)
+                            logger.error("%s\n%s", error_msg, traceback.format_exc())
+                else:
+                    summary["status"] = "session_blocked"
 
                 # Update trailing stops for all symbols
                 try:
