@@ -1,0 +1,1 @@
+# Capital.com Trading Bot\n\nAutomated trading bot for Capital.com. See PR for full implementation.
