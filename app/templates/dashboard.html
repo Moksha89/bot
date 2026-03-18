@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .header { background: #1e293b; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
+        .header h1 { font-size: 1.5rem; color: #38bdf8; }
+        .status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 600; }
+        .status-running { background: #065f46; color: #34d399; }
+        .status-stopped { background: #7f1d1d; color: #f87171; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .card { background: #1e293b; border-radius: 0.75rem; padding: 1.25rem; border: 1px solid #334155; }
+        .card h3 { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+        .card .value { font-size: 1.75rem; font-weight: 700; }
+        .positive { color: #34d399; }
+        .negative { color: #f87171; }
+        .neutral { color: #e2e8f0; }
+        .section { background: #1e293b; border-radius: 0.75rem; padding: 1.25rem; border: 1px solid #334155; margin-bottom: 1.5rem; }
+        .section h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #38bdf8; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th { text-align: left; padding: 0.75rem; color: #94a3b8; border-bottom: 1px solid #334155; font-weight: 600; }
+        td { padding: 0.75rem; border-bottom: 1px solid #1e293b; }
+        tr:hover td { background: #334155; }
+        .btn { padding: 0.5rem 1rem; border: none; border-radius: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.875rem; transition: all 0.2s; }
+        .btn-danger { background: #dc2626; color: white; }
+        .btn-danger:hover { background: #ef4444; }
+        .btn-success { background: #059669; color: white; }
+        .btn-success:hover { background: #10b981; }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-primary:hover { background: #3b82f6; }
+        .controls { display: flex; gap: 0.75rem; align-items: center; }
+        .mode-badge { padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; }
+        .mode-demo { background: #1e40af; color: #93c5fd; }
+        .mode-paper { background: #713f12; color: #fcd34d; }
+        .mode-live { background: #7f1d1d; color: #fca5a5; }
+        .mode-analysis { background: #064e3b; color: #6ee7b7; }
+        .signal-buy { color: #34d399; font-weight: 600; }
+        .signal-sell { color: #f87171; font-weight: 600; }
+        .signal-no_trade { color: #94a3b8; }
+        .refresh-info { color: #64748b; font-size: 0.75rem; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Trading Bot Dashboard</h1>
+        <div class="controls">
+            <span class="refresh-info">Auto-refresh: 30s</span>
+            <button class="btn btn-primary" onclick="refreshAll()">Refresh</button>
+            <button id="killBtn" class="btn btn-danger" onclick="toggleKillSwitch()">Kill Switch</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Status Cards -->
+        <div class="grid" id="statsGrid">
+            <div class="card">
+                <h3>Bot Status</h3>
+                <div class="value" id="botStatus">Loading...</div>
+                <div id="botMode" class="mode-badge mode-demo" style="margin-top:0.5rem">--</div>
+            </div>
+            <div class="card">
+                <h3>Total P&L</h3>
+                <div class="value neutral" id="totalPnl">$0.00</div>
+            </div>
+            <div class="card">
+                <h3>Today's P&L</h3>
+                <div class="value neutral" id="todayPnl">$0.00</div>
+            </div>
+            <div class="card">
+                <h3>Win Rate</h3>
+                <div class="value neutral" id="winRate">0%</div>
+            </div>
+            <div class="card">
+                <h3>Total Trades</h3>
+                <div class="value" id="totalTrades">0</div>
+            </div>
+            <div class="card">
+                <h3>Open Trades</h3>
+                <div class="value" id="openTrades">0</div>
+            </div>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="section">
+            <h2>Open Positions</h2>
+            <table>
+                <thead>
+                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>SL</th><th>TP</th><th>Opened</th></tr>
+                </thead>
+                <tbody id="openPositions">
+                    <tr><td colspan="7" style="text-align:center;color:#64748b">No open positions</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Recent Trades -->
+        <div class="section">
+            <h2>Recent Trades</h2>
+            <table>
+                <thead>
+                    <tr><th>Symbol</th><th>Direction</th><th>Size</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Result</th><th>Closed</th></tr>
+                </thead>
+                <tbody id="recentTrades">
+                    <tr><td colspan="8" style="text-align:center;color:#64748b">No trades yet</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Recent Signals -->
+        <div class="section">
+            <h2>Recent Signals</h2>
+            <table>
+                <thead>
+                    <tr><th>Time</th><th>Symbol</th><th>Direction</th><th>RSI</th><th>EMA Fast</th><th>EMA Slow</th><th>Acted On</th></tr>
+                </thead>
+                <tbody id="recentSignals">
+                    <tr><td colspan="7" style="text-align:center;color:#64748b">No signals yet</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Recent Errors -->
+        <div class="section">
+            <h2>Recent Errors</h2>
+            <table>
+                <thead>
+                    <tr><th>Time</th><th>Module</th><th>Type</th><th>Message</th></tr>
+                </thead>
+                <tbody id="recentErrors">
+                    <tr><td colspan="4" style="text-align:center;color:#64748b">No errors</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function fetchJSON(url) {
+            try {
+                const res = await fetch(API_BASE + url);
+                return await res.json();
+            } catch(e) {
+                console.error('Fetch error:', e);
+                return null;
+            }
+        }
+
+        function pnlClass(val) { return val > 0 ? 'positive' : val < 0 ? 'negative' : 'neutral'; }
+        function formatPrice(val) { return val != null ? val.toFixed(5) : '-'; }
+        function formatTime(iso) { return iso ? new Date(iso).toLocaleString() : '-'; }
+
+        async function loadStatus() {
+            const data = await fetchJSON('/dashboard/api/status');
+            if (!data) return;
+            const el = document.getElementById('botStatus');
+            el.textContent = data.is_running ? 'Running' : 'Stopped';
+            el.className = 'value ' + (data.is_running ? 'positive' : 'negative');
+            const modeEl = document.getElementById('botMode');
+            modeEl.textContent = data.mode.toUpperCase() + ' | ' + data.symbol + ' | ' + data.timeframe;
+            modeEl.className = 'mode-badge mode-' + data.mode;
+            const killBtn = document.getElementById('killBtn');
+            if (data.kill_switch) {
+                killBtn.textContent = 'Resume Bot';
+                killBtn.className = 'btn btn-success';
+            } else {
+                killBtn.textContent = 'Kill Switch';
+                killBtn.className = 'btn btn-danger';
+            }
+        }
+
+        async function loadStats() {
+            const data = await fetchJSON('/dashboard/api/stats');
+            if (!data) return;
+            const tpnl = document.getElementById('totalPnl');
+            tpnl.textContent = '$' + data.total_pnl.toFixed(2);
+            tpnl.className = 'value ' + pnlClass(data.total_pnl);
+            const dpnl = document.getElementById('todayPnl');
+            dpnl.textContent = '$' + data.today_pnl.toFixed(2);
+            dpnl.className = 'value ' + pnlClass(data.today_pnl);
+            document.getElementById('winRate').textContent = data.win_rate.toFixed(1) + '%';
+            document.getElementById('totalTrades').textContent = data.total_trades;
+            document.getElementById('openTrades').textContent = data.open_trades;
+        }
+
+        async function loadPositions() {
+            const open = await fetchJSON('/dashboard/api/positions?open_only=true');
+            const all = await fetchJSON('/dashboard/api/positions');
+            if (open) {
+                const tbody = document.getElementById('openPositions');
+                if (open.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b">No open positions</td></tr>';
+                } else {
+                    tbody.innerHTML = open.map(p => `<tr>
+                        <td>${p.symbol}</td>
+                        <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
+                        <td>${p.size}</td>
+                        <td>${formatPrice(p.entry_price)}</td>
+                        <td>${formatPrice(p.stop_loss)}</td>
+                        <td>${formatPrice(p.take_profit)}</td>
+                        <td>${formatTime(p.opened_at)}</td>
+                    </tr>`).join('');
+                }
+            }
+            if (all) {
+                const closed = all.filter(p => !p.is_open);
+                const tbody = document.getElementById('recentTrades');
+                if (closed.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b">No trades yet</td></tr>';
+                } else {
+                    tbody.innerHTML = closed.slice(0, 20).map(p => `<tr>
+                        <td>${p.symbol}</td>
+                        <td class="signal-${p.direction.toLowerCase()}">${p.direction}</td>
+                        <td>${p.size}</td>
+                        <td>${formatPrice(p.entry_price)}</td>
+                        <td>${formatPrice(p.exit_price)}</td>
+                        <td class="${pnlClass(p.pnl)}">${p.pnl != null ? p.pnl.toFixed(2) : '-'}</td>
+                        <td>${p.result}</td>
+                        <td>${formatTime(p.closed_at)}</td>
+                    </tr>`).join('');
+                }
+            }
+        }
+
+        async function loadSignals() {
+            const data = await fetchJSON('/dashboard/api/signals?limit=20');
+            if (!data) return;
+            const tbody = document.getElementById('recentSignals');
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b">No signals yet</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(s => `<tr>
+                <td>${formatTime(s.timestamp)}</td>
+                <td>${s.symbol}</td>
+                <td class="signal-${s.direction.toLowerCase()}">${s.direction}</td>
+                <td>${s.rsi != null ? s.rsi.toFixed(2) : '-'}</td>
+                <td>${s.ema_fast != null ? s.ema_fast.toFixed(5) : '-'}</td>
+                <td>${s.ema_slow != null ? s.ema_slow.toFixed(5) : '-'}</td>
+                <td>${s.acted_on ? '✓' : '–'}</td>
+            </tr>`).join('');
+        }
+
+        async function loadErrors() {
+            const data = await fetchJSON('/dashboard/api/errors?limit=10');
+            if (!data) return;
+            const tbody = document.getElementById('recentErrors');
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b">No errors</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(e => `<tr>
+                <td>${formatTime(e.timestamp)}</td>
+                <td>${e.module}</td>
+                <td>${e.error_type}</td>
+                <td>${e.message.substring(0, 100)}</td>
+            </tr>`).join('');
+        }
+
+        async function toggleKillSwitch() {
+            const status = await fetchJSON('/dashboard/api/status');
+            const enable = status ? !status.kill_switch : true;
+            await fetch(API_BASE + '/dashboard/api/kill-switch?enable=' + enable, { method: 'POST' });
+            await loadStatus();
+        }
+
+        async function refreshAll() {
+            await Promise.all([loadStatus(), loadStats(), loadPositions(), loadSignals(), loadErrors()]);
+        }
+
+        refreshAll();
+        setInterval(refreshAll, 30000);
+    </script>
+</body>
+</html>
