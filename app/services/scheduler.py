@@ -220,7 +220,8 @@ class TradingScheduler:
                         )
                         summary["status"] = "profit_target_reached"
                         summary["daily_pnl_pct"] = daily_pnl_pct
-                        return summary
+                        # NOTE: do NOT return here — still need to manage existing positions
+                        # (trailing stops, SL/TP checks, position sync, etc.)
 
                 # Check daily trade limit (20 normal + 10 recovery)
                 max_trades = settings.max_daily_trades
@@ -311,9 +312,11 @@ class TradingScheduler:
                     for s in ranked_symbols[:10]
                 ]
 
-                # Process symbols (only if session allows AND under daily limit)
+                # Process symbols (only if session allows AND under daily limit AND not at profit target)
+                daily_limit_reached = self._daily_trades >= max_trades
+                profit_target_hit = summary.get("status") == "profit_target_reached"
                 trades_this_cycle = 0
-                if session_ok and self._daily_trades < max_trades:
+                if session_ok and not daily_limit_reached and not profit_target_hit:
                     for symbol in ranked_symbols:
                         if self._daily_trades >= max_trades:
                             logger.info("Daily trade limit %d reached mid-cycle", max_trades)
