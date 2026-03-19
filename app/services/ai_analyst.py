@@ -358,45 +358,46 @@ class AIAnalyst:
 
     def _build_analysis_prompt(self, market_summary: dict) -> str:
         """Build the deep-research analysis prompt for the AI."""
-        return f"""You are a professional trading analyst. Analyze this trade setup using the data below.
+        signal_dir = market_summary.get("signal_direction", "N/A")
+        data_json = json.dumps(market_summary, indent=2)
+        return f"""You are a strict professional trading analyst who protects capital above all else.
 
 MARKET DATA:
-{json.dumps(market_summary, indent=2)}
+{data_json}
 
-ANALYSIS CHECKLIST — evaluate each quickly:
+SCORE EACH FACTOR (0-10 points each):
 
-1. TREND: Is direction aligned with EMA 20/50 structure? MACD confirming?
-2. MOMENTUM: RSI-14 and RSI-7 — confirming direction? Any divergence?
-3. VOLATILITY: Bollinger Band position? Spread vs ATR ratio acceptable?
-4. SUPPORT/RESISTANCE: Near pivot, Fibonacci, or key levels?
-5. PATTERNS: Any confirming candlestick patterns?
-6. VOLUME: Confirming the move (if available)?
-7. RISK-REWARD: Is there a reasonable R:R ratio?
+1. TREND (0-10): Is the proposed {signal_dir} aligned with EMA 20/50 structure AND MACD direction? Score 0 if opposing, 5 if neutral, 10 if perfectly aligned.
+2. MOMENTUM (0-10): Do RSI-14 and RSI-7 confirm direction? Is RSI in the right zone? Any divergence AGAINST the trade? If MACD histogram is shrinking, reduce score.
+3. VOLATILITY (0-10): Is spread vs ATR ratio below 30%? Is Bollinger Band position favorable? If spread/ATR > 50%, score 0.
+4. SUPPORT/RESISTANCE (0-10): Room to target? Entry near support (BUY) or resistance (SELL)? Or running INTO a wall?
+5. PATTERNS (0-10): Confirming candlestick patterns? Penalize reversal patterns AGAINST the trade.
+6. PRICE STRUCTURE (0-10): Higher-highs/higher-lows for BUY? Lower-highs/lower-lows for SELL?
+7. RISK-REWARD (0-10): At least 2:1 reward-to-risk? Stop loss at logical level?
 
-IMPORTANT GUIDELINES:
-- If 3+ of the 7 factors support the trade direction, you should CONFIRM.
-- Only REJECT if there are clear STRONG reasons against (e.g., major divergence, price hitting strong resistance for a BUY, extreme overbought/oversold AGAINST the direction).
-- A trade doesn't need to be perfect. We want GOOD setups, not only PERFECT ones.
-- Neutral/mixed signals = CONFIRM with moderate confidence, NOT reject.
+RULES:
+- Total score out of 70. Percentage = total/70*100.
+- CONFIRM only if score >= 50% (35+ points).
+- REJECT if score < 40% (28- points) OR any critical factor scores 0-1.
+- HOLD if 40-50% (borderline).
+- Be HONEST. Do NOT default to 65%. Actually calculate from the data.
 
 RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
-{{
+{{{{
     "recommendation": "CONFIRM" or "REJECT" or "HOLD",
-    "confidence": <number 0-100>,
-    "analysis": "<2-3 sentence analysis covering the key factors>",
-    "risk_notes": "<specific risk warnings if any>",
-    "key_levels": "<nearest support and resistance>",
+    "confidence": <calculated percentage 0-100>,
+    "analysis": "<2-3 sentences explaining your scoring>",
+    "risk_notes": "<specific risk warnings>",
+    "factor_scores": "T:<t>/10 M:<m>/10 V:<v>/10 SR:<sr>/10 P:<p>/10 PS:<ps>/10 RR:<rr>/10 = <total>/70",
     "trade_quality": "A+" or "A" or "B" or "C" or "D"
-}}
+}}}}
 
 GRADING:
-- A+ (CONFIRM, 85-100%): 6-7 factors align perfectly
-- A (CONFIRM, 70-85%): 5+ factors agree, minor concerns
-- B (CONFIRM, 55-70%): 3-4 factors agree, decent setup
-- C (CONFIRM, 40-55%): Mixed signals but no strong reason to reject
-- D (REJECT, 0-40%): Clear strong reasons against the trade
-
-CONFIRM for grades A+ through C. Only REJECT for grade D."""
+- A+ (CONFIRM, 85-100%): 60-70 points
+- A (CONFIRM, 70-85%): 49-59 points
+- B (CONFIRM, 50-70%): 35-48 points
+- C (HOLD, 40-50%): 28-34 points
+- D (REJECT, 0-40%): 0-27 points"""
 
     async def _call_openrouter(self, prompt: str, model: str = "") -> str:
         """Call OpenRouter API and return the response text."""
@@ -412,11 +413,11 @@ CONFIRM for grades A+ through C. Only REJECT for grade D."""
                 {
                     "role": "system",
                     "content": (
-                        "You are a professional trading analyst. "
-                        "You analyze trend, momentum, volatility, S/R levels, and patterns. "
-                        "You CONFIRM trades when 3+ factors support the direction. "
-                        "You only REJECT when there are clear strong reasons against the trade. "
-                        "Mixed or neutral signals should be CONFIRMED with moderate confidence. "
+                        "You are a strict professional trading analyst who protects capital. "
+                        "You score each factor 0-10 and calculate an honest total score. "
+                        "You CONFIRM trades only when 5+ factors are favorable (score >= 50%). "
+                        "You REJECT when the score is below 40% or a critical factor is 0-1. "
+                        "You never default to 65% — you calculate the actual score from data. "
                         "Always respond in the exact JSON format requested."
                     ),
                 },

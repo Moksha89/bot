@@ -219,8 +219,9 @@ class PositionManager:
             suggestion = "CLOSE_LOSS"
             reasons.append(f"Loss exceeds 3% of account ({risk_pct:.1f}%)")
 
-        # Auto-close if price moved more than 3 ATRs against us
-        elif unrealized_pnl < 0 and atr_distance > 3.0:
+        # Auto-close if price moved more than 5 ATRs against us.
+        # (Was 3.0 — too tight for 5-min candles where normal noise is 2-3 ATRs.)
+        elif unrealized_pnl < 0 and atr_distance > 5.0:
             suggestion = "CLOSE_LOSS"
             reasons.append(f"Price moved {atr_distance:.1f} ATRs against position")
 
@@ -292,6 +293,13 @@ class PositionManager:
                 )
                 if result.get("status") == "closed":
                     analysis["action_taken"] = "CLOSED"
+                elif "currently closed" in str(result.get("message", "")).lower():
+                    # Market is closed — don't keep retrying every cycle
+                    analysis["action_taken"] = "MARKET_CLOSED"
+                    logger.info(
+                        "Skipping auto-close for %s %s: market currently closed",
+                        pos.direction, pos.symbol,
+                    )
                 else:
                     analysis["action_taken"] = "CLOSE_FAILED"
                 analysis["close_result"] = result

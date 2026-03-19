@@ -435,38 +435,38 @@ class ScalpingStrategy:
 
         reasons: list[str] = []
 
-        # Scalp BUY: fresh bullish crossover + RSI not overbought + positive momentum
+        # Scalp BUY: fresh bullish crossover + RSI confirms direction + strong momentum
         if (
             bullish_cross
             and snapshot.rsi < rsi_overbought
-            and snapshot.rsi > rsi_oversold
-            and momentum > 0
+            and snapshot.rsi > 50  # RSI must confirm bullish bias
+            and momentum > 0.05  # Require meaningful momentum (0.05%), not just noise
             and snapshot.spread <= max_spread
             and not snapshot.has_open_long
         ):
             sl = snapshot.close - (snapshot.atr * sl_atr_mult)
             risk = snapshot.close - sl
             tp = snapshot.close + (risk * tp_rr)
-            confidence = min(0.6 + abs(momentum) * 0.1 + (snapshot.rsi - 40) / 200, 1.0)
+            confidence = min(0.6 + abs(momentum) * 0.1 + (snapshot.rsi - 50) / 200, 1.0)
             reasons.append(f"Scalp BUY: EMA5/13 bullish cross, momentum={momentum:.2f}%")
             return StrategyResult(
                 strategy=self.name, direction="BUY", confidence=confidence,
                 stop_loss=round(sl, 5), take_profit=round(tp, 5), reasons=reasons,
             )
 
-        # Scalp SELL: fresh bearish crossover + RSI not oversold + negative momentum
+        # Scalp SELL: fresh bearish crossover + RSI confirms direction + strong momentum
         if (
             bearish_cross
             and snapshot.rsi > rsi_oversold
-            and snapshot.rsi < rsi_overbought
-            and momentum < 0
+            and snapshot.rsi < 50  # RSI must confirm bearish bias
+            and momentum < -0.05  # Require meaningful momentum, not noise
             and snapshot.spread <= max_spread
             and not snapshot.has_open_short
         ):
             sl = snapshot.close + (snapshot.atr * sl_atr_mult)
             risk = sl - snapshot.close
             tp = snapshot.close - (risk * tp_rr)
-            confidence = min(0.6 + abs(momentum) * 0.1 + (60 - snapshot.rsi) / 200, 1.0)
+            confidence = min(0.6 + abs(momentum) * 0.1 + (50 - snapshot.rsi) / 200, 1.0)
             reasons.append(f"Scalp SELL: EMA5/13 bearish cross, momentum={momentum:.2f}%")
             return StrategyResult(
                 strategy=self.name, direction="SELL", confidence=confidence,

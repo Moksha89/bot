@@ -318,6 +318,14 @@ class OrderManager:
             risk_amount = account_balance * settings.risk.risk_per_trade
             adj_size = risk_amount / sl_distance
 
+        # Hard cap: position notional value must never exceed account balance.
+        # This prevents absurd sizes when sl_distance is tiny (e.g. forex pips).
+        if ref_price > 0 and adj_size * ref_price > account_balance:
+            adj_size = account_balance / ref_price
+            warnings.append(
+                f"Size capped by notional value (balance={account_balance:.2f})"
+            )
+
         # Cap position size using the instrument's actual margin factor.
         # margin_factor is a percentage: e.g., 50 = 50% margin required (2:1 leverage).
         # Use only 50% of available balance per single trade to leave room for

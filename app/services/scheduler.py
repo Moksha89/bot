@@ -539,8 +539,14 @@ class TradingScheduler:
             await self.order_manager.process_signal(session, signal, account_balance)
             return result
 
-        # Multi-timeframe confirmation: require higher-TF trend to agree
-        if settings.mtf_enabled and signal.direction in ("BUY", "SELL"):
+        # Multi-timeframe confirmation: require higher-TF trend to agree.
+        # Skip MTF filter for crypto (24/7 markets where hourly trends
+        # flip too fast to be reliable for 5-min entries).
+        _CRYPTO_SYMBOLS = {
+            "BTCUSD", "ETHUSD", "XRPUSD", "SOLUSD", "DOGEUSD",
+            "ADAUSD", "DOTUSD", "LINKUSD", "LTCUSD",
+        }
+        if settings.mtf_enabled and signal.direction in ("BUY", "SELL") and symbol not in _CRYPTO_SYMBOLS:
             htf_trend = self._htf_trend.get(symbol, "flat")
             blocked = False
             if signal.direction == "BUY" and htf_trend == "down":
@@ -827,9 +833,12 @@ class TradingScheduler:
                 e20 = float(ema20.iloc[-1])
                 e50 = float(ema50.iloc[-1])
                 sep = (e20 - e50) / e50 if e50 != 0 else 0
-                if sep > 0.005:
+                # Use a wider threshold (1.5%) so only *strong* opposing
+                # trends block trades.  The old 0.5% was too tight and
+                # blocked ~70% of valid 5-min signals.
+                if sep > 0.015:
                     self._htf_trend[symbol] = "up"
-                elif sep < -0.005:
+                elif sep < -0.015:
                     self._htf_trend[symbol] = "down"
                 else:
                     self._htf_trend[symbol] = "flat"
@@ -847,16 +856,18 @@ class TradingScheduler:
         {"EURUSD", "GBPUSD", "AUDUSD"},
         # USD-quote pairs (move with USD)
         {"USDJPY", "USDCAD"},
-        # US tech — highly correlated
-        {"AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"},
+        # US tech mega-cap — split into 2 groups so we can trade from each
+        {"AAPL", "MSFT", "GOOGL", "AMZN"},
+        {"META", "NVDA", "TSLA"},
         # US indices
         {"US100", "US500"},
         # Precious metals
         {"GOLD", "SILVER"},
         # Crypto large-cap
         {"BTCUSD", "ETHUSD"},
-        # Crypto alt-coins (follow BTC/ETH)
-        {"XRPUSD", "SOLUSD", "DOGEUSD", "ADAUSD", "DOTUSD", "LINKUSD", "LTCUSD"},
+        # Crypto alt-coins — split into smaller groups so more can trade
+        {"XRPUSD", "SOLUSD", "ADAUSD"},
+        {"DOGEUSD", "DOTUSD", "LINKUSD", "LTCUSD"},
     ]
 
     async def _check_correlation_filter(
