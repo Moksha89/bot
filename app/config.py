@@ -45,13 +45,19 @@ class CapitalConfig:
 @dataclass
 class TradingConfig:
     symbol: str = field(default_factory=lambda: _env("TRADING_SYMBOL", "XAUUSD"))
+    # Symbols ranked by backtest profit factor (2026-03-19).
+    # Dropped worst forex pairs (EURUSD PF=0.01, GBPUSD PF=0.01, USDCAD PF=0.00,
+    # USDJPY PF=0.02, AUDUSD PF=0.05) and worst equities/indices
+    # (MSFT PF=0.09, US500 PF=0.09, DE40 PF=0.07).
     symbols: list[str] = field(default_factory=lambda: [
         s.strip() for s in _env(
             "TRADING_SYMBOLS",
-            "GOLD,SILVER,OIL_CRUDE,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,"
-            "US100,US500,DE40,UK100,"
-            "BTCUSD,ETHUSD,XRPUSD,SOLUSD,DOGEUSD,ADAUSD,DOTUSD,LINKUSD,LTCUSD,"
-            "AAPL,TSLA,NVDA,AMZN,GOOGL,META,MSFT"
+            # Top tier (PF > 0.7): OIL_CRUDE, DOGEUSD, AMZN, ADAUSD, DOTUSD, XRPUSD
+            # Mid tier (PF 0.3-0.7): TSLA, SILVER, BTCUSD, ETHUSD, GOLD
+            # Lower tier kept for diversity: US100, UK100, AAPL, NVDA, GOOGL, META
+            "OIL_CRUDE,DOGEUSD,AMZN,ADAUSD,DOTUSD,XRPUSD,"
+            "TSLA,SILVER,BTCUSD,ETHUSD,GOLD,"
+            "US100,UK100,AAPL,NVDA,GOOGL,META"
         ).split(",") if s.strip()
     ])
     timeframe: str = field(default_factory=lambda: _env("TRADING_TIMEFRAME", "HOUR"))
@@ -93,7 +99,7 @@ class RiskConfig:
         default_factory=lambda: _env_float("SL_ATR_MULTIPLIER", 2.5)
     )
     tp_risk_reward: float = field(
-        default_factory=lambda: _env_float("TP_RISK_REWARD", 3.0)
+        default_factory=lambda: _env_float("TP_RISK_REWARD", 3.5)
     )
     max_portfolio_risk: float = field(
         default_factory=lambda: _env_float("MAX_PORTFOLIO_RISK", 0.30)
@@ -222,6 +228,13 @@ class Settings:
     )
     min_trade_value: float = field(
         default_factory=lambda: _env_float("MIN_TRADE_VALUE", 50.0)
+    )
+    # ADX trend regime filter: skip trades in choppy markets (ADX < threshold)
+    adx_filter_enabled: bool = field(
+        default_factory=lambda: _env_bool("ADX_FILTER_ENABLED", True)
+    )
+    adx_min_threshold: float = field(
+        default_factory=lambda: _env_float("ADX_MIN_THRESHOLD", 20.0)
     )
 
 

@@ -30,7 +30,7 @@ from app.services.sentiment import SentimentAnalyzer
 from app.services.ml_scorer import MLSignalScorer
 from app.services.auto_optimizer import AutoOptimizer
 from app.services.portfolio import PortfolioManager
-from app.strategy.indicators import calculate_atr, calculate_ema
+from app.strategy.indicators import calculate_adx, calculate_atr, calculate_ema
 from app.strategy.signals import SignalGenerator
 from app.strategy.strategies import StrategySelector
 
@@ -65,6 +65,7 @@ class TradingScheduler:
         self._is_running = False
         self._authenticated = False
         self._latest_atr: dict[str, float] = {}  # ATR values from last symbol processing
+        self._latest_adx: dict[str, float] = {}  # ADX values for trend regime filter
 
         # New feature modules
         self.strategy_selector = StrategySelector()
@@ -459,6 +460,11 @@ class TradingScheduler:
             last_atr = atr_series.iloc[-1]
             if pd.notna(last_atr):
                 self._latest_atr[symbol] = float(last_atr)
+            # Compute ADX for trend regime filter
+            adx_series = calculate_adx(df["high"], df["low"], df["close"])
+            last_adx = adx_series.iloc[-1]
+            if pd.notna(last_adx):
+                self._latest_adx[symbol] = float(last_adx)
 
         # Update portfolio price history for correlation tracking
         if "close" in df.columns:
@@ -541,6 +547,26 @@ class TradingScheduler:
             # Record NO_TRADE signal to DB so it appears on dashboard
             await self.order_manager.process_signal(session, signal, account_balance)
             return result
+
+        # ADX trend regime filter: skip trades in choppy/trendless markets.
+        # ADX < 20 means no clear trend — most strategies lose in this regime.
+        if settings.adx_filter_enabled and signal.direction in ("BUY", "SELL"):
+            adx_val = self._latest_adx.get(symbol)
+            if adx_val is not None and adx_val < settings.adx_min_threshold:
+                original = signal.direction
+                signal.direction = "NO_TRADE"
+                signal.reasons.append(
+                    f"ADX filter: {original} blocked, ADX={adx_val:.1f} < {settings.adx_min_threshold} (no trend)"
+                )
+                logger.info(
+                    "ADX filter blocked %s %s (ADX=%.1f < %.0f)",
+                    original, symbol, adx_val, settings.adx_min_threshold,
+                )
+                await self.order_manager.process_signal(session, signal, account_balance)
+                result["filters"]["adx"] = f"Blocked: ADX={adx_val:.1f} (no trend)"
+                return result
+            if adx_val is not None:
+                result["filters"]["adx"] = f"Passed: ADX={adx_val:.1f}"
 
         # Multi-timeframe confirmation: require higher-TF trend to agree.
         # Skip MTF filter for crypto (24/7 markets where hourly trends

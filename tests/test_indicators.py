@@ -106,7 +106,7 @@ class TestAddAllIndicators:
     def test_columns_added(self) -> None:
         df = _make_ohlcv()
         result = add_all_indicators(df)
-        expected_cols = {"ema_fast", "ema_slow", "rsi", "atr", "breakout_high", "breakout_low"}
+        expected_cols = {"ema_fast", "ema_slow", "rsi", "atr", "adx", "breakout_high", "breakout_low"}
         assert expected_cols.issubset(set(result.columns))
 
     def test_no_mutation(self) -> None:

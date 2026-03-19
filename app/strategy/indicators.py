@@ -52,6 +52,57 @@ def calculate_atr(
     return true_range.ewm(span=period, adjust=False).mean()
 
 
+def calculate_adx(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = 14,
+) -> pd.Series:
+    """Calculate Average Directional Index (ADX).
+
+    ADX measures trend strength regardless of direction:
+    - ADX < 20: weak/no trend (choppy market — avoid trading)
+    - ADX 20-40: developing/moderate trend
+    - ADX > 40: strong trend
+
+    Uses Wilder smoothing (same as RSI/ATR).
+    """
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+
+    # +DM and -DM
+    plus_dm = high - prev_high
+    minus_dm = prev_low - low
+
+    # Only keep positive values where +DM > -DM (and vice versa)
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+    # True Range
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Wilder smoothing (EWM with alpha=1/period)
+    smoothed_tr = true_range.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    smoothed_plus_dm = plus_dm.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    smoothed_minus_dm = minus_dm.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+
+    # +DI and -DI
+    plus_di = 100 * smoothed_plus_dm / smoothed_tr
+    minus_di = 100 * smoothed_minus_dm / smoothed_tr
+
+    # DX = |+DI - -DI| / (+DI + -DI) * 100
+    di_sum = plus_di + minus_di
+    dx = (plus_di - minus_di).abs() / di_sum.where(di_sum != 0, 1.0) * 100
+
+    # ADX = smoothed DX
+    adx = dx.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    return adx
+
+
 def detect_breakout_high(close: pd.Series, high: pd.Series) -> pd.Series:
     """
     Detect if the current candle closes above the previous candle's high.
@@ -86,6 +137,7 @@ def add_all_indicators(
     df["ema_slow"] = calculate_ema(df["close"], ema_slow)
     df["rsi"] = calculate_rsi(df["close"], rsi_period)
     df["atr"] = calculate_atr(df["high"], df["low"], df["close"], atr_period)
+    df["adx"] = calculate_adx(df["high"], df["low"], df["close"])
     df["breakout_high"] = detect_breakout_high(df["close"], df["high"])
     df["breakout_low"] = detect_breakout_low(df["close"], df["low"])
     return df

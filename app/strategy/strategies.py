@@ -585,8 +585,9 @@ class StrategySelector:
                 best = r
 
         # Require minimum confidence to avoid weak signals that lead to losses.
-        # 0.65 threshold filters out marginal setups that historically lose money.
-        min_confidence = 0.65
+        # Lowered from 0.65 to 0.55 because the ADX regime filter now handles
+        # choppy-market rejection upstream, so we can let more signals through.
+        min_confidence = 0.55
         if best is not None and best.confidence < min_confidence:
             logger.info(
                 "Strategy %s signal rejected: confidence %.3f < %.2f minimum",
