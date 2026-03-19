@@ -333,7 +333,7 @@ class OrderManager:
         margin_factor_pct = constraints.get("margin_factor", 50)
         if ref_price > 0 and margin_factor_pct > 0:
             margin_per_unit = ref_price * (margin_factor_pct / 100.0)
-            usable_balance = account_balance * 0.5  # reserve half for other trades
+            usable_balance = account_balance * 0.8  # reserve 20% for other trades
             max_size_by_margin = usable_balance / margin_per_unit
             if adj_size > max_size_by_margin:
                 warnings.append(
