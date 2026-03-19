@@ -612,7 +612,9 @@ class TradingScheduler:
                 result["filters"]["correlation"] = corr_msg
                 return result
 
-        # ML scoring — require score > 0.6 for high-analysis trades
+        # ML scoring — require score > 0.3 for high-analysis trades.
+        # Lowered from 0.6 because with few training samples (~30) and
+        # low historical win rate the model is overly pessimistic.
         # Only gate on ML score when the model is actually trained;
         # an untrained model always returns 0.5, which would deadlock trading.
         if self.ml_scorer.enabled and self.ml_scorer._is_trained:
@@ -624,10 +626,10 @@ class TradingScheduler:
             )
             result["ml_score"] = ml_score
             score_val = ml_score.get("score", 0)
-            if score_val < 0.6:
+            if score_val < 0.3:
                 signal.direction = "NO_TRADE"
-                signal.reasons.append(f"ML scorer: low confidence (score={score_val:.3f} < 0.6)")
-                logger.info("ML scorer rejected signal for %s (score=%.3f < 0.6)", symbol, score_val)
+                signal.reasons.append(f"ML scorer: low confidence (score={score_val:.3f} < 0.3)")
+                logger.info("ML scorer rejected signal for %s (score=%.3f < 0.3)", symbol, score_val)
                 await self.order_manager.process_signal(session, signal, account_balance)
                 return result
 

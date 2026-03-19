@@ -234,7 +234,7 @@ class Settings:
         default_factory=lambda: _env_bool("ADX_FILTER_ENABLED", True)
     )
     adx_min_threshold: float = field(
-        default_factory=lambda: _env_float("ADX_MIN_THRESHOLD", 20.0)
+        default_factory=lambda: _env_float("ADX_MIN_THRESHOLD", 15.0)
     )
 
 
