@@ -360,27 +360,28 @@ class AIAnalyst:
         """Build the deep-research analysis prompt for the AI."""
         signal_dir = market_summary.get("signal_direction", "N/A")
         data_json = json.dumps(market_summary, indent=2)
-        return f"""You are a strict professional trading analyst who protects capital above all else.
+        return f"""You are a balanced professional trading analyst. Your job is to evaluate trade setups fairly — not too strict, not too loose.
 
 MARKET DATA:
 {data_json}
 
-SCORE EACH FACTOR (0-10 points each):
+SCORE EACH FACTOR (0-10 points each). IMPORTANT: 5 = neutral/unclear. Only score below 5 if there is CLEAR evidence AGAINST the trade. Score above 5 if there is evidence FOR the trade.
 
-1. TREND (0-10): Is the proposed {signal_dir} aligned with EMA 20/50 structure AND MACD direction? Score 0 if opposing, 5 if neutral, 10 if perfectly aligned.
-2. MOMENTUM (0-10): Do RSI-14 and RSI-7 confirm direction? Is RSI in the right zone? Any divergence AGAINST the trade? If MACD histogram is shrinking, reduce score.
-3. VOLATILITY (0-10): Is spread vs ATR ratio below 30%? Is Bollinger Band position favorable? If spread/ATR > 50%, score 0.
-4. SUPPORT/RESISTANCE (0-10): Room to target? Entry near support (BUY) or resistance (SELL)? Or running INTO a wall?
-5. PATTERNS (0-10): Confirming candlestick patterns? Penalize reversal patterns AGAINST the trade.
-6. PRICE STRUCTURE (0-10): Higher-highs/higher-lows for BUY? Lower-highs/lower-lows for SELL?
-7. RISK-REWARD (0-10): At least 2:1 reward-to-risk? Stop loss at logical level?
+1. TREND (0-10): Is the proposed {signal_dir} aligned with EMA 20/50? Score 5 if EMAs are close together (flat/unclear). Score 7-10 if EMAs clearly support direction. Score 0-3 only if EMAs clearly oppose direction.
+2. MOMENTUM (0-10): RSI-14 and RSI-7 confirm direction? Score 5 if RSI is near 50 (neutral). Score 7+ if RSI clearly supports direction. Score below 3 only if RSI is extreme against the trade.
+3. VOLATILITY (0-10): Is spread vs ATR acceptable? Score 5 if spread/ATR is 30-50%. Score 7+ if below 30%. Score below 3 only if spread/ATR > 60%.
+4. SUPPORT/RESISTANCE (0-10): Room to move toward target? Score 5 if no clear S/R nearby. Score 7+ if entry is near favorable S/R level.
+5. PATTERNS (0-10): Any confirming candlestick patterns? Score 5 if no clear patterns (neutral). Score 7+ for confirming patterns. Score below 3 only for strong reversal patterns against trade.
+6. PRICE STRUCTURE (0-10): Higher-highs/lows for BUY? Lower-highs/lows for SELL? Score 5 if ranging/mixed.
+7. RISK-REWARD (0-10): Reasonable reward-to-risk? Score 5 if ~1.5:1. Score 7+ if 2:1 or better.
 
 RULES:
 - Total score out of 70. Percentage = total/70*100.
-- CONFIRM only if score >= 50% (35+ points).
-- REJECT if score < 40% (28- points) OR any critical factor scores 0-1.
-- HOLD if 40-50% (borderline).
-- Be HONEST. Do NOT default to 65%. Actually calculate from the data.
+- If most factors are neutral (5/10), total should be ~35/70 = 50%. This is a CONFIRM.
+- CONFIRM if score >= 43% (30+ points). Most trade setups with neutral-to-positive signals should CONFIRM.
+- HOLD if 30-43% (21-29 points). Mixed signals.
+- REJECT only if score < 30% (below 21 points) — meaning multiple factors clearly oppose the trade.
+- Do NOT default to any fixed number. Calculate honestly from the data.
 
 RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
 {{{{
@@ -393,11 +394,11 @@ RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
 }}}}
 
 GRADING:
-- A+ (CONFIRM, 85-100%): 60-70 points
-- A (CONFIRM, 70-85%): 49-59 points
-- B (CONFIRM, 50-70%): 35-48 points
-- C (HOLD, 40-50%): 28-34 points
-- D (REJECT, 0-40%): 0-27 points"""
+- A+ (CONFIRM, 85-100%): 60-70 points — exceptional setup
+- A (CONFIRM, 70-85%): 49-59 points — strong setup
+- B (CONFIRM, 43-70%): 30-48 points — decent setup, trade it
+- C (HOLD, 30-43%): 21-29 points — weak, borderline
+- D (REJECT, 0-30%): 0-20 points — clearly bad, do not trade"""
 
     async def _call_openrouter(self, prompt: str, model: str = "") -> str:
         """Call OpenRouter API and return the response text."""
@@ -413,11 +414,12 @@ GRADING:
                 {
                     "role": "system",
                     "content": (
-                        "You are a strict professional trading analyst who protects capital. "
-                        "You score each factor 0-10 and calculate an honest total score. "
-                        "You CONFIRM trades only when 5+ factors are favorable (score >= 50%). "
-                        "You REJECT when the score is below 40% or a critical factor is 0-1. "
-                        "You never default to 65% — you calculate the actual score from data. "
+                        "You are a balanced professional trading analyst. "
+                        "You score each factor 0-10 where 5 means neutral/unclear. "
+                        "Only score below 5 when evidence clearly opposes the trade. "
+                        "A setup with mostly neutral factors (5/10 each) scores ~50% and should CONFIRM. "
+                        "You REJECT only when multiple factors clearly oppose the trade (score < 30%). "
+                        "Calculate the actual score from data. Do not default to any fixed number. "
                         "Always respond in the exact JSON format requested."
                     ),
                 },

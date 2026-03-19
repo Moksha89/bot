@@ -654,8 +654,8 @@ class TradingScheduler:
                 signal.direction, symbol, combined_rec, combined_confidence,
             )
 
-            # Only block trades the AI explicitly rejects (grade D)
-            if combined_rec == "REJECT" and combined_confidence < 35:
+            # Only block trades the AI explicitly rejects (grade D, < 30%)
+            if combined_rec == "REJECT" and combined_confidence < 30:
                 original_direction = signal.direction
                 signal.direction = "NO_TRADE"
                 signal.reasons.append(f"AI REJECTED (conf={combined_confidence:.0f}%): {ai_analysis['analysis']}")
