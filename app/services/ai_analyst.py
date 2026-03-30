@@ -511,12 +511,201 @@ RESPOND IN EXACTLY THIS JSON FORMAT:
             )
         return "\n".join(lines)
 
-    def _parse_ai_response(self, response_text: str) -> dict:
-        """Parse the AI response into a structured dict."""
-        # Try to extract JSON from the response
-        text = response_text.strip()
+    async def make_trading_decision(
+        self,
+        symbol: str,
+        timeframe: str,
+        df: pd.DataFrame,
+        spread: float,
+        account_balance: float,
+        has_open_long: bool = False,
+        has_open_short: bool = False,
+    ) -> dict:
+        """
+        AI makes the FULL trading decision — direction, SL, TP, everything.
+        No rule-based strategies involved. The AI analyzes all market data
+        and decides whether to BUY, SELL, or skip (NO_TRADE).
 
-        # Handle markdown code blocks
+        Returns:
+            dict with keys:
+                - direction: 'BUY', 'SELL', or 'NO_TRADE'
+                - stop_loss: float or None
+                - take_profit: float or None
+                - confidence: float 0-100
+                - analysis: str (reasoning)
+                - risk_notes: str
+        """
+        if not self.enabled:
+            logger.debug("AI analyst disabled (no API key)")
+            return {
+                "direction": "NO_TRADE",
+                "stop_loss": None,
+                "take_profit": None,
+                "confidence": 0.0,
+                "analysis": "AI analyst disabled — no API key configured",
+                "risk_notes": "Cannot trade without AI in AI-only mode",
+            }
+
+        # Prepare comprehensive market data
+        market_summary = self._prepare_market_summary(
+            symbol, timeframe, df,
+            signal_direction="UNDECIDED",  # AI will decide
+            indicators={},
+            spread=spread,
+            account_balance=account_balance,
+        )
+        market_summary["has_open_long"] = has_open_long
+        market_summary["has_open_short"] = has_open_short
+
+        prompt = self._build_decision_prompt(market_summary)
+
+        try:
+            response = await self._call_openrouter(prompt)
+            parsed = self._parse_decision_response(response, market_summary)
+            logger.info(
+                "AI decision for %s: %s (confidence: %.1f%%) SL=%s TP=%s",
+                symbol,
+                parsed["direction"],
+                parsed["confidence"],
+                parsed.get("stop_loss"),
+                parsed.get("take_profit"),
+            )
+            return parsed
+        except Exception as e:
+            logger.error("AI decision failed for %s: %s", symbol, e)
+            return {
+                "direction": "NO_TRADE",
+                "stop_loss": None,
+                "take_profit": None,
+                "confidence": 0.0,
+                "analysis": f"AI decision error: {e}. Skipping trade.",
+                "risk_notes": "AI decision unavailable",
+            }
+
+    def _build_decision_prompt(self, market_summary: dict) -> str:
+        """Build the prompt for full AI trading decision."""
+        data_json = json.dumps(market_summary, indent=2)
+        current_price = market_summary.get("current_price", 0)
+        atr_val = market_summary.get("volatility", {}).get("atr", 0)
+        symbol = market_summary.get("symbol", "UNKNOWN")
+        has_open_long = market_summary.get("has_open_long", False)
+        has_open_short = market_summary.get("has_open_short", False)
+
+        return f"""You are an expert algorithmic trader. You have FULL authority to decide whether to trade or not. Analyze ALL the market data below and make a trading decision.
+
+SYMBOL: {symbol}
+CURRENT PRICE: {current_price}
+ATR (Average True Range): {atr_val}
+EXISTING POSITIONS: Long={has_open_long}, Short={has_open_short}
+
+COMPLETE MARKET DATA:
+{data_json}
+
+YOUR TASK:
+1. Analyze the trend (EMAs, price structure, higher-highs/lower-lows)
+2. Analyze momentum (RSI, MACD histogram direction)
+3. Analyze volatility (Bollinger Bands width, ATR)
+4. Check support/resistance levels and Fibonacci
+5. Check candlestick patterns
+6. Determine if there is a HIGH-PROBABILITY trade setup
+
+DECISION RULES:
+- Only recommend BUY or SELL if you see a CLEAR, high-probability setup
+- You need at least 3 confirming factors to recommend a trade
+- If the market is choppy, ranging, or unclear — say NO_TRADE
+- Do NOT trade against the dominant trend
+- If there is already an open position in the same direction, say NO_TRADE
+- Set stop_loss at a logical level (below support for BUY, above resistance for SELL)
+- Stop loss should be 1.5-3x ATR from entry
+- Set take_profit at 2-4x the risk (stop loss distance)
+- Prefer trades near support/resistance levels with clear rejection patterns
+
+RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
+{{{{
+    "direction": "BUY" or "SELL" or "NO_TRADE",
+    "stop_loss": <price level or null if NO_TRADE>,
+    "take_profit": <price level or null if NO_TRADE>,
+    "confidence": <0-100>,
+    "analysis": "<2-3 sentences explaining your decision>",
+    "risk_notes": "<specific risks to watch>",
+    "factors_for": ["<list of factors supporting the trade>"],
+    "factors_against": ["<list of factors against the trade>"]
+}}}}"""
+
+    def _parse_decision_response(self, response_text: str, market_summary: dict) -> dict:
+        """Parse the AI's full trading decision response."""
+        text = self._extract_json_text(response_text)
+
+        current_price = market_summary.get("current_price", 0)
+        atr_val = market_summary.get("volatility", {}).get("atr", 0)
+
+        try:
+            result = json.loads(text)
+            direction = result.get("direction", "NO_TRADE").upper()
+            if direction not in ("BUY", "SELL", "NO_TRADE"):
+                direction = "NO_TRADE"
+
+            stop_loss = result.get("stop_loss")
+            take_profit = result.get("take_profit")
+
+            # Validate SL/TP make sense
+            if direction == "BUY" and stop_loss is not None:
+                stop_loss = float(stop_loss)
+                if stop_loss >= current_price:
+                    # SL must be below price for BUY — fix it
+                    stop_loss = round(current_price - 2.0 * atr_val, 5)
+                if take_profit is not None:
+                    take_profit = float(take_profit)
+                    if take_profit <= current_price:
+                        # TP must be above price for BUY — fix it
+                        risk = current_price - stop_loss
+                        take_profit = round(current_price + 3.0 * risk, 5)
+            elif direction == "SELL" and stop_loss is not None:
+                stop_loss = float(stop_loss)
+                if stop_loss <= current_price:
+                    # SL must be above price for SELL — fix it
+                    stop_loss = round(current_price + 2.0 * atr_val, 5)
+                if take_profit is not None:
+                    take_profit = float(take_profit)
+                    if take_profit >= current_price:
+                        # TP must be below price for SELL — fix it
+                        risk = stop_loss - current_price
+                        take_profit = round(current_price - 3.0 * risk, 5)
+
+            # If direction is a trade but SL/TP missing, calculate defaults
+            if direction in ("BUY", "SELL") and stop_loss is None:
+                if direction == "BUY":
+                    stop_loss = round(current_price - 2.5 * atr_val, 5)
+                    risk = current_price - stop_loss
+                    take_profit = round(current_price + 3.0 * risk, 5)
+                else:
+                    stop_loss = round(current_price + 2.5 * atr_val, 5)
+                    risk = stop_loss - current_price
+                    take_profit = round(current_price - 3.0 * risk, 5)
+
+            return {
+                "direction": direction,
+                "stop_loss": round(float(stop_loss), 5) if stop_loss is not None else None,
+                "take_profit": round(float(take_profit), 5) if take_profit is not None else None,
+                "confidence": float(result.get("confidence", 50)),
+                "analysis": result.get("analysis", "No analysis provided"),
+                "risk_notes": result.get("risk_notes", "None"),
+            }
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to parse AI decision as JSON (%s): %s", exc, text[:200])
+            return {
+                "direction": "NO_TRADE",
+                "stop_loss": None,
+                "take_profit": None,
+                "confidence": 0.0,
+                "analysis": f"Parse error: {text[:300]}",
+                "risk_notes": "Response parsing failed — skipping trade",
+            }
+
+    @staticmethod
+    def _extract_json_text(response_text: str) -> str:
+        """Extract JSON from response text, handling markdown code blocks."""
+        text = response_text.strip()
         if text.startswith("```"):
             lines = text.split("\n")
             json_lines = []
@@ -530,6 +719,11 @@ RESPOND IN EXACTLY THIS JSON FORMAT:
                 elif in_block:
                     json_lines.append(line)
             text = "\n".join(json_lines)
+        return text
+
+    def _parse_ai_response(self, response_text: str) -> dict:
+        """Parse the AI response into a structured dict."""
+        text = self._extract_json_text(response_text)
 
         try:
             result = json.loads(text)

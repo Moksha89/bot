@@ -429,14 +429,24 @@ class TradingScheduler:
         timeframe: str,
         account_balance: float,
     ) -> dict:
-        """Process a single symbol through the full trading pipeline."""
+        """Process a single symbol — AI makes the FULL trading decision.
+
+        Pipeline:
+        1. News filter (structural — keep)
+        2. Fetch candles & compute ATR/ADX for trailing stops
+        3. Check open positions
+        4. AI makes full decision: BUY/SELL/NO_TRADE + SL + TP
+        5. Correlation filter (structural — keep)
+        6. Portfolio risk check (structural — keep)
+        7. Execute trade
+        """
         result: dict = {
             "signal": None,
             "trade": None,
             "filters": {},
         }
 
-        # News filter check
+        # News filter check (structural — not strategy)
         news_ok, news_msg = self.news_filter.is_trading_allowed(symbol)
         result["filters"]["news"] = news_msg
         if not news_ok:
@@ -453,14 +463,11 @@ class TradingScheduler:
         spread = await self.market_data.get_spread(symbol)
 
         # Compute and store latest ATR value for trailing stop updates.
-        # We calculate ATR directly here because add_all_indicators() returns
-        # a copy, so the original df won't have the 'atr' column.
         if len(df) > 0 and all(c in df.columns for c in ("high", "low", "close")):
             atr_series = calculate_atr(df["high"], df["low"], df["close"])
             last_atr = atr_series.iloc[-1]
             if pd.notna(last_atr):
                 self._latest_atr[symbol] = float(last_atr)
-            # Compute ADX for trend regime filter
             adx_series = calculate_adx(df["high"], df["low"], df["close"])
             last_adx = adx_series.iloc[-1]
             if pd.notna(last_adx):
@@ -474,59 +481,61 @@ class TradingScheduler:
         has_long = await self.position_manager.has_open_long(session, symbol)
         has_short = await self.position_manager.has_open_short(session, symbol)
 
-        # Generate signal using basic EMA crossover first
-        signal = self.signal_generator.generate(
-            df=df, symbol=symbol, timeframe=timeframe, spread=spread,
-            has_open_long=has_long, has_open_short=has_short,
+        # ============================================================
+        # AI DECIDES EVERYTHING — no rule-based strategies
+        # The AI receives full market data and decides BUY/SELL/NO_TRADE
+        # with its own SL and TP levels.
+        # ============================================================
+        ai_decision = await self.ai_analyst.make_trading_decision(
+            symbol=symbol,
+            timeframe=timeframe,
+            df=df,
+            spread=spread,
+            account_balance=account_balance,
+            has_open_long=has_long,
+            has_open_short=has_short,
         )
 
-        # If basic signal is NO_TRADE, try multi-strategy selector
-        # (scalping, swing, breakout, mean-reversion, EMA crossover)
-        if signal.direction == "NO_TRADE":
-            from app.strategy.indicators import add_all_indicators
-            from app.strategy.rules import MarketSnapshot
-            df_ind = add_all_indicators(
-                df,
-                ema_fast=self.signal_generator.ema_fast,
-                ema_slow=self.signal_generator.ema_slow,
-                rsi_period=self.signal_generator.rsi_period,
-            )
-            if len(df_ind) > self.signal_generator.ema_slow + 1:
-                latest = df_ind.iloc[-1]
-                prev = df_ind.iloc[-2]
-                snapshot = MarketSnapshot(
-                    close=float(latest["close"]),
-                    ema_fast=float(latest["ema_fast"]),
-                    ema_slow=float(latest["ema_slow"]),
-                    rsi=float(latest["rsi"]),
-                    atr=float(latest["atr"]),
-                    prev_high=float(prev["high"]),
-                    prev_low=float(prev["low"]),
-                    spread=spread,
-                    has_open_long=has_long,
-                    has_open_short=has_short,
-                )
-                strat_result = self.strategy_selector.evaluate_all(
-                    df_ind, snapshot,
-                    sl_atr_mult=self.signal_generator.sl_atr_mult,
-                    tp_rr=self.signal_generator.tp_rr,
-                    rsi_buy_min=self.signal_generator.rsi_buy_min,
-                    rsi_buy_max=self.signal_generator.rsi_buy_max,
-                    rsi_sell_min=self.signal_generator.rsi_sell_min,
-                    rsi_sell_max=self.signal_generator.rsi_sell_max,
-                    max_spread=self.signal_generator.max_spread,
-                )
-                if strat_result.direction != "NO_TRADE" and strat_result.stop_loss is not None and strat_result.take_profit is not None:
-                    # Override signal with the multi-strategy result
-                    signal.direction = strat_result.direction
-                    signal.stop_loss = strat_result.stop_loss
-                    signal.take_profit = strat_result.take_profit
-                    signal.reasons = strat_result.reasons
-                    logger.info(
-                        "Multi-strategy override: %s %s via %s (conf=%.3f)",
-                        strat_result.direction, symbol,
-                        strat_result.strategy.value, strat_result.confidence,
-                    )
+        direction = ai_decision["direction"]
+        confidence = ai_decision.get("confidence", 0)
+        analysis = ai_decision.get("analysis", "")
+        risk_notes = ai_decision.get("risk_notes", "")
+
+        # Build a TradeSignal from the AI's decision
+        from app.strategy.signals import TradeSignal
+        from app.strategy.indicators import add_all_indicators
+
+        df_ind = add_all_indicators(
+            df,
+            ema_fast=self.signal_generator.ema_fast,
+            ema_slow=self.signal_generator.ema_slow,
+            rsi_period=self.signal_generator.rsi_period,
+        )
+        latest = df_ind.iloc[-1]
+        prev = df_ind.iloc[-2]
+        current_close = float(latest["close"])
+        ema_f = float(latest["ema_fast"]) if "ema_fast" in latest.index else 0.0
+        ema_s = float(latest["ema_slow"]) if "ema_slow" in latest.index else 0.0
+        rsi_val = float(latest["rsi"]) if "rsi" in latest.index else 50.0
+        atr_val = float(latest["atr"]) if "atr" in latest.index else 0.0
+
+        signal = TradeSignal(
+            timestamp=datetime.now(timezone.utc),
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=direction,
+            close_price=current_close,
+            ema_fast=ema_f,
+            ema_slow=ema_s,
+            rsi=rsi_val,
+            atr=atr_val,
+            prev_high=float(prev["high"]),
+            prev_low=float(prev["low"]),
+            spread=spread,
+            reasons=[f"AI decision (conf={confidence:.0f}%): {analysis}"],
+            stop_loss=ai_decision.get("stop_loss"),
+            take_profit=ai_decision.get("take_profit"),
+        )
 
         result["signal"] = {
             "direction": signal.direction,
@@ -536,69 +545,24 @@ class TradingScheduler:
             "rsi": signal.rsi,
             "reasons": signal.reasons,
         }
+        result["ai_analysis"] = {
+            "recommendation": direction,
+            "confidence": confidence,
+            "analysis": analysis,
+            "risk_notes": risk_notes,
+        }
 
         logger.info(
-            "Signal: %s %s | Close=%.5f EMA_F=%.5f EMA_S=%.5f RSI=%.2f",
-            signal.direction, symbol, signal.close_price,
-            signal.ema_fast, signal.ema_slow, signal.rsi,
+            "AI decision: %s %s | confidence=%.1f%% | Close=%.5f RSI=%.2f",
+            signal.direction, symbol, confidence,
+            signal.close_price, signal.rsi,
         )
 
         if signal.direction == "NO_TRADE":
-            # Record NO_TRADE signal to DB so it appears on dashboard
             await self.order_manager.process_signal(session, signal, account_balance)
             return result
 
-        # ADX trend regime filter: skip trades in choppy/trendless markets.
-        # ADX < 20 means no clear trend — most strategies lose in this regime.
-        if settings.adx_filter_enabled and signal.direction in ("BUY", "SELL"):
-            adx_val = self._latest_adx.get(symbol)
-            if adx_val is not None and adx_val < settings.adx_min_threshold:
-                original = signal.direction
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(
-                    f"ADX filter: {original} blocked, ADX={adx_val:.1f} < {settings.adx_min_threshold} (no trend)"
-                )
-                logger.info(
-                    "ADX filter blocked %s %s (ADX=%.1f < %.0f)",
-                    original, symbol, adx_val, settings.adx_min_threshold,
-                )
-                await self.order_manager.process_signal(session, signal, account_balance)
-                result["filters"]["adx"] = f"Blocked: ADX={adx_val:.1f} (no trend)"
-                return result
-            if adx_val is not None:
-                result["filters"]["adx"] = f"Passed: ADX={adx_val:.1f}"
-
-        # Multi-timeframe confirmation: require higher-TF trend to agree.
-        # Skip MTF filter for crypto (24/7 markets where hourly trends
-        # flip too fast to be reliable for 5-min entries).
-        _CRYPTO_SYMBOLS = {
-            "BTCUSD", "ETHUSD", "XRPUSD", "SOLUSD", "DOGEUSD",
-            "ADAUSD", "DOTUSD", "LINKUSD", "LTCUSD",
-        }
-        if settings.mtf_enabled and signal.direction in ("BUY", "SELL") and symbol not in _CRYPTO_SYMBOLS:
-            htf_trend = self._htf_trend.get(symbol, "flat")
-            blocked = False
-            if signal.direction == "BUY" and htf_trend == "down":
-                blocked = True
-            elif signal.direction == "SELL" and htf_trend == "up":
-                blocked = True
-
-            if blocked:
-                original = signal.direction
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(
-                    f"MTF filter: {original} blocked, higher-TF trend is {htf_trend}"
-                )
-                logger.info(
-                    "MTF filter blocked %s %s (HTF trend=%s)",
-                    original, symbol, htf_trend,
-                )
-                await self.order_manager.process_signal(session, signal, account_balance)
-                result["filters"]["mtf"] = f"Blocked: {original} vs HTF {htf_trend}"
-                return result
-            result["filters"]["mtf"] = f"Passed: {signal.direction} aligns with HTF {htf_trend}"
-
-        # Correlation filter: avoid opening same-direction trades on highly correlated symbols
+        # Correlation filter: avoid same-direction trades on correlated symbols (structural)
         if signal.direction in ("BUY", "SELL"):
             corr_blocked, corr_msg = await self._check_correlation_filter(
                 session, symbol, signal.direction,
@@ -612,96 +576,7 @@ class TradingScheduler:
                 result["filters"]["correlation"] = corr_msg
                 return result
 
-        # ML scoring — require score > 0.3 for high-analysis trades.
-        # Lowered from 0.6 because with few training samples (~30) and
-        # low historical win rate the model is overly pessimistic.
-        # Only gate on ML score when the model is actually trained;
-        # an untrained model always returns 0.5, which would deadlock trading.
-        if self.ml_scorer.enabled and self.ml_scorer._is_trained:
-            ml_score = self.ml_scorer.score_signal(
-                ema_fast=signal.ema_fast, ema_slow=signal.ema_slow,
-                rsi=signal.rsi, atr=signal.atr,
-                spread=spread, direction=signal.direction,
-                close_price=signal.close_price,
-            )
-            result["ml_score"] = ml_score
-            score_val = ml_score.get("score", 0)
-            if score_val < 0.3:
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(f"ML scorer: low confidence (score={score_val:.3f} < 0.3)")
-                logger.info("ML scorer rejected signal for %s (score=%.3f < 0.3)", symbol, score_val)
-                await self.order_manager.process_signal(session, signal, account_balance)
-                return result
-
-        # Sentiment check
-        if self.sentiment_analyzer.enabled:
-            sentiment = await self.sentiment_analyzer.analyze(symbol)
-            result["sentiment"] = {
-                "score": sentiment.score,
-                "label": sentiment.label,
-                "confidence": sentiment.confidence,
-            }
-            favorable, sent_msg = self.sentiment_analyzer.is_sentiment_favorable(
-                sentiment, signal.direction,
-            )
-            if not favorable:
-                original_direction = signal.direction
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(f"Sentiment: {sent_msg}")
-                logger.info("Sentiment blocked %s for %s", original_direction, symbol)
-                await self.order_manager.process_signal(session, signal, account_balance)
-                return result
-
-        # AI market analysis (single call to reduce latency — 27 symbols × 3s = 81s)
-        ai_analysis = None
-        if (
-            signal.direction != "NO_TRADE"
-            and settings.ai_analysis_enabled
-            and self.ai_analyst.enabled
-        ):
-            # Run standard market analysis only (skip chart vision to halve latency)
-            standard_analysis = await self.ai_analyst.analyze_market(
-                symbol=symbol, timeframe=timeframe, df=df,
-                signal_direction=signal.direction,
-                indicators={
-                    "ema_fast": signal.ema_fast, "ema_slow": signal.ema_slow,
-                    "rsi": signal.rsi, "atr": signal.atr,
-                },
-                spread=spread, account_balance=account_balance,
-            )
-
-            combined_rec = standard_analysis["recommendation"]
-            combined_confidence = standard_analysis["confidence"]
-            ai_analysis = {
-                "recommendation": combined_rec,
-                "confidence": combined_confidence,
-                "analysis": standard_analysis["analysis"],
-                "risk_notes": standard_analysis["risk_notes"],
-            }
-            result["ai_analysis"] = ai_analysis
-
-            logger.info(
-                "AI analysis for %s %s: %s (confidence: %.1f%%)",
-                signal.direction, symbol, combined_rec, combined_confidence,
-            )
-
-            # Only block trades the AI explicitly rejects (grade D, < 30%)
-            if combined_rec == "REJECT" and combined_confidence < 30:
-                original_direction = signal.direction
-                signal.direction = "NO_TRADE"
-                signal.reasons.append(f"AI REJECTED (conf={combined_confidence:.0f}%): {ai_analysis['analysis']}")
-                await self.notifier.notify_risk_limit(
-                    f"AI rejected {original_direction} on {symbol}: {ai_analysis['analysis']}"
-                )
-                await self.order_manager.process_signal(session, signal, account_balance)
-                return result
-            # CONFIRM or HOLD — proceed with trade (HOLD = mixed signals, still tradeable)
-            logger.info(
-                "AI approved %s %s: %s (conf=%.1f%%)",
-                signal.direction, symbol, combined_rec, combined_confidence,
-            )
-
-        # Portfolio risk check
+        # Portfolio risk check (structural)
         if signal.stop_loss is not None:
             position_risk = account_balance * settings.risk.risk_per_trade
             portfolio_check = await self.portfolio_manager.check_portfolio_risk(
@@ -724,6 +599,11 @@ class TradingScheduler:
         if settings.adaptive_sizing_enabled:
             effective_balance = await self._get_adaptive_balance(session, account_balance)
             result["adaptive_balance"] = effective_balance
+
+        logger.info(
+            "Adaptive sizing: effective=%.2f, placing %s %s",
+            effective_balance, signal.direction, symbol,
+        )
 
         # Execute trade
         trade_result = await self.order_manager.process_signal(
