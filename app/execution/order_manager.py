@@ -166,13 +166,13 @@ class OrderManager:
         await session.commit()
 
         logger.info(
-            "Paper trade placed: %s %s size=%.2f entry=%.5f SL=%.5f TP=%.5f",
+            "Paper trade placed: %s %s size=%.2f entry=%.5f SL=%s TP=%s",
             signal.direction,
             signal.symbol,
             size,
             signal.close_price,
-            signal.stop_loss,
-            signal.take_profit,
+            f"{signal.stop_loss:.5f}" if signal.stop_loss is not None else "N/A",
+            f"{signal.take_profit:.5f}" if signal.take_profit is not None else "N/A",
         )
         return {
             "status": "filled",

@@ -673,15 +673,19 @@ RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
                         take_profit = round(current_price - 3.0 * risk, 5)
 
             # If direction is a trade but SL/TP missing, calculate defaults
-            if direction in ("BUY", "SELL") and stop_loss is None:
+            if direction in ("BUY", "SELL") and (stop_loss is None or take_profit is None):
                 if direction == "BUY":
-                    stop_loss = round(current_price - 2.5 * atr_val, 5)
+                    if stop_loss is None:
+                        stop_loss = round(current_price - 2.5 * atr_val, 5)
                     risk = current_price - stop_loss
-                    take_profit = round(current_price + 3.0 * risk, 5)
+                    if take_profit is None:
+                        take_profit = round(current_price + 3.0 * risk, 5)
                 else:
-                    stop_loss = round(current_price + 2.5 * atr_val, 5)
+                    if stop_loss is None:
+                        stop_loss = round(current_price + 2.5 * atr_val, 5)
                     risk = stop_loss - current_price
-                    take_profit = round(current_price - 3.0 * risk, 5)
+                    if take_profit is None:
+                        take_profit = round(current_price - 3.0 * risk, 5)
 
             return {
                 "direction": direction,

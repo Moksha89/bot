@@ -105,7 +105,7 @@ class MLSignalScorer:
         )
 
         # Cross-validation
-        scores = cross_val_score(model, X, y, cv=min(5, len(X) // 5), scoring="accuracy")
+        scores = cross_val_score(model, X, y, cv=max(2, min(5, len(X) // 5)), scoring="accuracy")
 
         # Train on full data
         model.fit(X, y)
